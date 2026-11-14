@@ -29,3 +29,4 @@
 dotnet build SmartLaws.Web.csproj
 dotnet run --project SmartLaws.Web.csproj --urls "http://localhost:5088"
 ```
+
