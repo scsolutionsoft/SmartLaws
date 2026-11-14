@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SmartLaws — ระบบบริหารจัดการคดีความ แบบฟอร์มศาลยุติธรรม และลายเซ็นอิเล็กทรอนิกส์</title>
+    <!-- Google Fonts: Sarabun -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Sarabun', 'sans-serif']
+                    }
+                }
+            }
+        };
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/css/court-forms.css?v=9" />
+</head>
+<body class="bg-slate-100 text-slate-900">
+
+    <div class="app-shell">
+        <!-- ==================== SIDEBAR NAVIGATION ==================== -->
+        <aside id="sidebar" class="sidebar no-print">
+            <div class="p-5 border-b border-slate-700/60 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-600 flex items-center justify-center shadow-lg shadow-amber-500/20 text-slate-950 font-extrabold text-xl">
+                        ⚖️
+                    </div>
+                    <div>
+                        <div class="font-bold text-lg tracking-wide text-white flex items-center gap-1.5">
+                            SmartLaws <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30">PRO</span>
+                        </div>
+                        <div class="text-xs text-slate-400">ระบบสำนวนคดีและแบบพิมพ์ศาล</div>
+                    </div>
+                </div>
+                <button onclick="App.toggleSidebar()" class="lg:hidden text-slate-300 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Active Lawyer Role Switcher in Sidebar (ซ่อนเมื่อเป็นแอดมิน) -->
+            <div id="sidebarLawyerRoleBox" data-lawyer-only="true" class="px-4 py-3 bg-slate-900/60 border-b border-slate-800">
+                <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-2 font-semibold">มุมมองบทบาททนายความ (เฉพาะคดีตนเอง)</div>
+                <div class="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                    <button id="roleBtnAll" onclick="App.setGlobalRoleFilter('ALL')" class="text-xs py-1.5 rounded-md font-semibold bg-amber-500 text-slate-950 transition">
+                        ทุกบทบาท
+                    </button>
+                    <button id="roleBtnPlaintiff" onclick="App.setGlobalRoleFilter('ทนายโจทก์')" class="text-xs py-1.5 rounded-md font-medium text-slate-300 hover:text-white transition">
+                        ทนายโจทก์
+                    </button>
+                    <button id="roleBtnDefendant" onclick="App.setGlobalRoleFilter('ทนายจำเลย')" class="text-xs py-1.5 rounded-md font-medium text-slate-300 hover:text-white transition">
+                        ทนายจำเลย
+                    </button>
+                </div>
+            </div>
+
+            <!-- Admin Mode Notice in Sidebar -->
+            <div id="sidebarAdminModeBox" data-admin-only="true" class="hidden px-4 py-3 bg-amber-950/60 border-b border-amber-800/50">
+                <div class="text-[11px] uppercase tracking-wider text-amber-300 font-bold">🛡️ โหมดผู้ดูแลระบบบริการ (Admin)</div>
+                <div class="text-[11px] text-amber-100/80 mt-0.5 leading-snug">เห็นเฉพาะระบบบริหารจัดการบริการและชื่อคดี ไม่สามารถเข้าดูข้อมูลสำนวนคดีของทนายความได้</div>
+            </div>
+
+            <!-- Navigation Menu -->
+            <nav class="flex-1 py-3 overflow-y-auto">
+                <div data-lawyer-only="true" class="px-5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">ระบบทนายความ (เฉพาะคดีของตนเอง)</div>
+                <div data-lawyer-only="true" class="nav-item active" data-tab="dashboard" onclick="App.switchTab('dashboard')">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+                    <span>แดชบอร์ด & ภาพรวมคดีของฉัน</span>
+                </div>
+                <div data-lawyer-only="true" class="nav-item" data-tab="cases" onclick="App.switchTab('cases')">
+                    <i data-lucide="folder-kanban" class="w-5 h-5"></i>
+                    <span>สำนวนคดีของฉัน & มอบหมายเสมียน</span>
+                </div>
+                <div data-lawyer-only="true" class="nav-item" data-tab="studio" onclick="App.switchTab('studio')">
+                    <i data-lucide="file-text" class="w-5 h-5"></i>
+                    <span>สตูดิโอร่างคำฟ้อง/คำร้องศาล</span>
+                </div>
+                <div data-lawyer-only="true" class="nav-item" data-tab="files" onclick="App.switchTab('files')">
+                    <i data-lucide="folder-archive" class="w-5 h-5"></i>
+                    <span>คลังไฟล์สารบัญแบบพิมพ์ศาล</span>
+                </div>
+                <div data-lawyer-only="true" class="nav-item" data-tab="procedure" onclick="App.switchTab('procedure')">
+                    <i data-lucide="git-branch" class="w-5 h-5"></i>
+                    <span>วิ.อาญา & วิ.แพ่ง (Workflow)</span>
+                </div>
+
+                <div data-lawyer-only="true" class="px-5 py-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">ระบบพิมพ์และลายเซ็น</div>
+                <div data-lawyer-only="true" class="nav-item" data-tab="esign" onclick="App.switchTab('esign')">
+                    <i data-lucide="pen-tool" class="w-5 h-5"></i>
+                    <span>ลายเซ็นอิเล็กทรอนิกส์ & ลบพื้นหลัง</span>
+                </div>
+                <div data-lawyer-only="true" class="nav-item" data-tab="printcenter" onclick="App.switchTab('printcenter')">
+                    <i data-lucide="printer" class="w-5 h-5"></i>
+                    <span>ศูนย์พิมพ์แบบฟอร์มศาลครบชุด</span>
+                </div>
+
+                <div class="px-5 py-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">ระบบบริการ โควต้าคดี & บริหารจัดการ</div>
+                <div data-admin-only="true" class="nav-item hidden" data-tab="backoffice" onclick="App.switchTab('backoffice')">
+                    <i data-lucide="shield-check" class="w-5 h-5"></i>
+                    <span>บริหารจัดการระบบบริการ (Admin)</span>
+                </div>
+                <div class="nav-item" data-tab="subscription" onclick="App.switchTab('subscription')">
+                    <i data-lucide="credit-card" class="w-5 h-5"></i>
+                    <span>แพ็กเกจโควต้าคดี & แจ้งสลิป</span>
+                </div>
+                <div class="nav-item" data-tab="reports" onclick="App.switchTab('reports')">
+                    <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+                    <span id="navReportsLabel">ระบบรายงานและสถิติคดี</span>
+                </div>
+            </nav>
+
+            <!-- Database Status Footer -->
+            <div class="p-4 border-t border-slate-800 bg-slate-950/60 text-xs">
+                <div class="flex items-center gap-2 text-emerald-400 font-medium">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>SQL Server: SmartLaws Connected</span>
+                </div>
+                <div class="text-slate-400 mt-1 truncate">Host: 119.59.118.29 (Pool 60-800)</div>
+            </div>
+        </aside>
+
+        <!-- ==================== MAIN CONTENT AREA ==================== -->
+        <main class="main-area">
+            <!-- Top Header Bar -->
+            <header class="topbar no-print sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 px-4 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <button onclick="App.toggleSidebar()" class="lg:hidden p-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100">
+                        <i data-lucide="menu" class="w-5 h-5"></i>
+                    </button>
+                    <div>
+                        <h1 id="pageHeaderTitle" class="text-lg lg:text-xl font-bold text-slate-900">แดชบอร์ดบริหารสำนวนคดีความ (ทนายโจทก์ / ทนายจำเลย)</h1>
+                        <p id="pageHeaderSubtitle" class="text-xs text-slate-500">ครอบคลุมวิธีพิจารณาความอาญาและวิธีพิจารณาความแพ่ง พร้อมระบบพิมพ์แบบพิมพ์ศาลมาตรฐาน</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 flex-wrap">
+                    <!-- แถบสถานะบัญชีทนายความ / เสมียนทนาย / แอดมิน และโควต้าสำนวนคดี -->
+                    <div class="flex flex-wrap items-center gap-2 bg-slate-100 border border-slate-200 rounded-xl px-2.5 py-1.5">
+                        <span class="text-[11px] font-bold text-slate-600">บัญชีผู้ใช้:</span>
+                        <select id="headerAccountSelect" onchange="App.switchActiveAccount(this.value)" class="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-900"></select>
+                        <div id="headerClerkPrincipalWrap" class="hidden items-center gap-1.5 pl-1 border-l border-slate-300">
+                            <span class="text-[11px] font-bold text-teal-800">ทำงานให้ทนาย:</span>
+                            <select id="headerClerkPrincipalSelect" onchange="App.onSwitchClerkPrincipalLawyer(this.value)" class="bg-teal-50 border border-teal-300 rounded-lg px-2 py-1 text-xs font-bold text-teal-950"></select>
+                        </div>
+                        <span id="headerQuotaBadge" class="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold">โควต้า ๑/๓ คดี</span>
+                    </div>
+                    <button data-lawyer-only="true" onclick="App.openManageClerkModal()" class="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold bg-teal-50 text-teal-900 border border-teal-300 hover:bg-teal-100 transition">
+                        <span>👨‍💼 ตั้งเสมียนทนาย</span>
+                    </button>
+                    <button onclick="App.openRegisterLawyerModal()" class="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100 transition">
+                        <span>📝 สมัครทดลองใช้ฟรี ๓ คดี</span>
+                    </button>
+                    <button onclick="App.openPaymentSlipModal()" class="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition">
+                        <span>💳 ซื้อโควต้า / แจ้งสลิป</span>
+                    </button>
+                    <button data-lawyer-only="true" onclick="App.openNewCaseModal()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition shadow-sm">
+                        <i data-lucide="folder-plus" class="w-4 h-4 text-amber-400"></i>
+                        <span>เปิดสำนวนคดีใหม่</span>
+                    </button>
+                    <button data-lawyer-only="true" onclick="App.openStudioForNewDoc()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 hover:from-amber-400 hover:to-yellow-500 transition shadow-sm">
+                        <i data-lucide="file-plus-2" class="w-4 h-4"></i>
+                        <span>สร้างคำฟ้อง/คำร้อง</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dynamic Views Container -->
+            <div class="p-4 lg:p-8 max-w-[1600px] w-full mx-auto space-y-6">
+
+                <!-- 1. VIEW: DASHBOARD -->
+                <section id="view-dashboard" class="space-y-6">
+                    <!-- KPI Cards -->
+                    <div id="dashboardKpiGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"></div>
+
+                    <!-- Highlighted Case Analysis Banner (แสดงเฉพาะสำนวนคดีที่เป็นของแอคเคาท์ทนายความที่กำลังใช้งาน) -->
+                    <div id="dashboardHighlightedCasesGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                        <!-- Criminal Case Highlight (Defendant Lawyer: นายเกรียงไกร โล่ห์ทวนชัย) -->
+                        <div id="dashboardHighlightCase1Card" class="bg-white rounded-2xl border border-teal-200 shadow-sm overflow-hidden">
+                            <div class="bg-gradient-to-r from-teal-900 to-slate-900 px-5 py-4 text-white flex items-center justify-between">
+                                <div class="flex items-center gap-2.5">
+                                    <span class="px-2.5 py-1 rounded-md bg-teal-500/20 border border-teal-400/40 text-teal-200 text-xs font-bold">ฐานะ: ทนายจำเลยที่ ๒</span>
+                                    <span class="px-2.5 py-1 rounded-md bg-rose-500/20 border border-rose-400/40 text-rose-200 text-xs font-bold">คดีอาญา (อ ๓๙๘/๒๕๖๘)</span>
+                                </div>
+                                <button onclick="App.selectCaseAndOpenStudio(1)" class="text-xs bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-3 py-1.5 rounded-lg transition">
+                                    เปิดชุดคำร้องในฟอร์มศาล →
+                                </button>
+                            </div>
+                            <div class="p-5 space-y-3">
+                                <div class="font-bold text-base text-slate-900">คดีหมายเลขดำที่ อ ๓๙๘/๒๕๖๘ (ศาลจังหวัดศรีสะเกษ)</div>
+                                <div class="text-xs text-slate-600 leading-relaxed">
+                                    <strong>โจทก์:</strong> พนักงานอัยการจังหวัดศรีสะเกษ &nbsp;|&nbsp; <strong>จำเลย:</strong> นายสามัคคี เดชกล้า ที่ ๑ กับพวกรวม ๒๐ คน (เราเป็นทนายจำเลยที่ ๒: <strong>นพ.อัครเดช บุญเย็น</strong>)<br/>
+                                    <strong>เจ้าของสำนวน (ทนายผู้เรียง):</strong> นายเกรียงไกร โล่ห์ทวนชัย &nbsp;|&nbsp; <strong>เสมียนผู้รับผิดชอบคดี:</strong> นายชาญณรงค์ ผ่องแผ้ว
+                                </div>
+                                <div class="bg-teal-50/70 border border-teal-200 rounded-xl p-3 text-xs text-slate-700 space-y-1">
+                                    <div class="font-bold text-teal-900">เอกสารในสำนวนที่วิเคราะห์จากไฟล์จริงพร้อมพิมพ์ลงแบบฟอร์มศาล:</div>
+                                    <div class="flex flex-wrap gap-1.5 pt-1" id="case1QuickDocs"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Civil Case Highlight (Plaintiff Lawyer: นายปิยะณัฐ วัชราภรณ์) -->
+                        <div id="dashboardHighlightCase2Card" class="bg-white rounded-2xl border border-blue-200 shadow-sm overflow-hidden">
+                            <div class="bg-gradient-to-r from-blue-900 to-slate-900 px-5 py-4 text-white flex items-center justify-between">
+                                <div class="flex items-center gap-2.5">
+                                    <span class="px-2.5 py-1 rounded-md bg-blue-500/20 border border-blue-400/40 text-blue-200 text-xs font-bold">ฐานะ: ทนายโจทก์</span>
+                                    <span class="px-2.5 py-1 rounded-md bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 text-xs font-bold">คดีแพ่ง (กู้ยืมเงิน / มโนสาเร่)</span>
+                                </div>
+                                <button onclick="App.selectCaseAndOpenStudio(2)" class="text-xs bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-3 py-1.5 rounded-lg transition">
+                                    เปิดชุดคำฟ้องในฟอร์มศาล →
+                                </button>
+                            </div>
+                            <div class="p-5 space-y-3">
+                                <div class="font-bold text-base text-slate-900">คดีแพ่ง นางไพลิน อาจสามารถ ฟ้อง นายมงคล อุทัย (ศาลจังหวัดศรีสะเกษ)</div>
+                                <div class="text-xs text-slate-600 leading-relaxed">
+                                    <strong>โจทก์:</strong> นางไพลิน อาจสามารถ &nbsp;|&nbsp; <strong>จำเลย:</strong> นายมงคล อุทัย (ทุนทรัพย์ ๑๕๘,๑๒๕ บาท ดอกเบี้ยร้อยละ ๕ ต่อปี)<br/>
+                                    <strong>เจ้าของสำนวน (ทนายโจทก์ผู้เรียง):</strong> นายปิยะณัฐ วัชราภรณ์ (ใบอนุญาต ๗๘๓๔/๒๕๒๙) &nbsp;|&nbsp; <strong>เสมียนผู้รับผิดชอบคดี:</strong> นายชาญณรงค์ ผ่องแผ้ว
+                                </div>
+                                <div class="bg-blue-50/70 border border-blue-200 rounded-xl p-3 text-xs text-slate-700 space-y-1">
+                                    <div class="font-bold text-blue-900">เอกสารในสำนวนที่วิเคราะห์จากไฟล์จริงพร้อมพิมพ์ลงแบบฟอร์มศาล:</div>
+                                    <div class="flex flex-wrap gap-1.5 pt-1" id="case2QuickDocs"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Documents & Cases Table -->
+                    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                        <div class="xl:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <div class="flex items-center justify-between mb-4">
+                                <h2 class="font-bold text-base text-slate-900 flex items-center gap-2">
+                                    <i data-lucide="files" class="w-5 h-5 text-amber-600"></i>
+                                    <span>คำฟ้อง คำร้อง คำให้การ และแบบพิมพ์ศาลล่าสุดในระบบ</span>
+                                </h2>
+                                <button onclick="App.switchTab('studio')" class="text-xs font-semibold text-blue-700 hover:underline">เปิดสตูดิโอจัดการฟอร์มทั้งหมด →</button>
+                            </div>
+                            <div id="dashboardDocsTable" class="overflow-x-auto"></div>
+                        </div>
+
+                        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <div class="flex items-center justify-between mb-4">
+                                <h2 class="font-bold text-base text-slate-900 flex items-center gap-2">
+                                    <i data-lucide="book-open-check" class="w-5 h-5 text-amber-600"></i>
+                                    <span>คลังแบบพิมพ์ศาลมาตรฐาน</span>
+                                </h2>
+                            </div>
+                            <div id="dashboardTemplatesList" class="space-y-2.5 max-h-[420px] overflow-y-auto pr-1"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 2. VIEW: CASES MANAGEMENT (สำนวนคดีแพ่ง & อาญา) -->
+                <section id="view-cases" class="hidden space-y-6">
+                    <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-xs font-semibold text-slate-500 mr-1">กรองประเภทคดี:</span>
+                            <button onclick="App.filterCases('ALL')" id="caseFilterAll" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white">ทั้งหมด</button>
+                            <button onclick="App.filterCases('อาญา')" id="caseFilterCrim" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-rose-50 hover:text-rose-700">คดีอาญา (ป.วิ.อ.)</button>
+                            <button onclick="App.filterCases('แพ่ง')" id="caseFilterCiv" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700">คดีแพ่ง (ป.วิ.พ.)</button>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input id="caseSearchInput" oninput="App.renderCasesView()" type="text" placeholder="ค้นหาเลขคดีดำ, ชื่อโจทก์, จำเลย, ข้อหา..." class="px-3.5 py-2 rounded-lg border border-slate-300 text-xs w-64 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                            <button onclick="App.openNewCaseModal()" class="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">+ เพิ่มสำนวนคดี</button>
+                        </div>
+                    </div>
+
+                    <div id="casesCardsContainer" class="grid grid-cols-1 lg:grid-cols-2 gap-5"></div>
+                </section>
+
+                <!-- 3. VIEW: COURT FORM STUDIO (สตูดิโอร่างคำฟ้อง/คำร้อง ลงแบบฟอร์มศาล + พรีวิว A4 แบบ Real-Time) -->
+                <section id="view-studio" class="hidden space-y-5">
+                    <!-- Studio Toolbar -->
+                    <div class="bg-slate-900 text-white rounded-2xl p-4 shadow-md flex flex-wrap items-center justify-between gap-3 no-print">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <div>
+                                <label class="block text-[10px] uppercase tracking-wider text-slate-400">เลือกสำนวนคดี</label>
+                                <select id="studioCaseSelect" onchange="App.onStudioCaseChange(this.value)" class="mt-0.5 bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-3 py-2 font-medium"></select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] uppercase tracking-wider text-slate-400">เลือกเอกสารในสำนวน หรือสร้างจากแบบฟอร์มศาล</label>
+                                <select id="studioDocSelect" onchange="App.onStudioDocChange(this.value)" class="mt-0.5 bg-slate-800 border border-slate-700 text-amber-300 text-xs rounded-lg px-3 py-2 font-semibold min-w-[260px]"></select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] uppercase tracking-wider text-slate-400">เปลี่ยนแบบพิมพ์ศาล</label>
+                                <select id="studioTemplateSelect" onchange="App.onStudioTemplateChange(this.value)" class="mt-0.5 bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-3 py-2"></select>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button onclick="App.saveCurrentStudioDocument()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow">
+                                <i data-lucide="save" class="w-4 h-4"></i>
+                                <span>บันทึกคำร้องลงฐานข้อมูล</span>
+                            </button>
+                            <button onclick="App.archiveCurrentFormToCaseDirectory()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow">
+                                <i data-lucide="folder-check" class="w-4 h-4"></i>
+                                <span>📸 จัดเก็บเป็นไฟล์ภาพ/PDF เข้าสารบัญสำนวน</span>
+                            </button>
+                            <button onclick="App.exportCurrentDocx()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow">
+                                <i data-lucide="file-down" class="w-4 h-4"></i>
+                                <span>ส่งออกไฟล์ Word (.docx)</span>
+                            </button>
+                            <button onclick="App.printCourtPaper('studio')" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold transition shadow">
+                                <i data-lucide="printer" class="w-4 h-4"></i>
+                                <span>พิมพ์แบบฟอร์มศาล / PDF (A4)</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Split Screen: Left Form Editor | Right Live Court Paper A4 Preview -->
+                    <div class="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+                        <!-- Left Panel: Structured Form Inputs & Smart Clause Formatter -->
+                        <div class="xl:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5 editor-panel no-print">
+                            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+                                <div>
+                                    <h3 class="font-bold text-slate-900 text-base">กรอกและจัดรูปแบบคำฟ้อง / คำร้องตามแบบฟอร์มศาล</h3>
+                                    <p class="text-xs text-slate-500">ปรับแก้ข้อความแล้วพรีวิวกระดาษแบบพิมพ์ศาลด้านขวาจะเปลี่ยนทันที</p>
+                                </div>
+                                <label class="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 bg-amber-50 border border-amber-200 px-2.5 py-1.5 rounded-lg cursor-pointer">
+                                    <input type="checkbox" id="edUseThaiNumerals" checked onchange="App.syncEditorToPreview()" class="rounded text-amber-600" />
+                                    <span>แปลงเลขไทยอัตโนมัติ (๐-๙)</span>
+                                </label>
+                            </div>
+
+                            <!-- Role & Header Config -->
+                            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-700 mb-1">รหัสแบบพิมพ์ศาล</label>
+                                    <select id="edFormCode" onchange="App.syncEditorToPreview()" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold">
+                                        <option value="(๑)">(๑) ปกหน้าสำนวน</option>
+                                        <option value="(๒)">(๒) หน้าสำนวน</option>
+                                        <option value="(๓)">(๓) สารบาญ</option>
+                                        <option value="(๔)">(๔) คำฟ้อง</option>
+                                        <option value="(๕)">(๕) คำขอท้ายคำฟ้องแพ่ง</option>
+                                        <option value="(๖)">(๖) คำขอท้ายคำฟ้องอาญา</option>
+                                        <option value="(๗)">(๗) คำร้อง / คำแถลง / คำขอ</option>
+                                        <option value="(๘)">(๘) บัญชีทรัพย์</option>
+                                        <option value="(๙)">(๙) ใบแต่งทนายความ</option>
+                                        <option value="(๑๐)">(๑๐) ใบมอบฉันทะ</option>
+                                        <option value="(๑๑)">(๑๑) คำให้การจำเลย</option>
+                                        <option value="(๑๑ ก.)">(๑๑ ก.) คำให้การจำเลย (เพิ่มเติม)</option>
+                                        <option value="(๑๒)">(๑๒) หมายเรียกคดีมโนสาเร่</option>
+                                        <option value="(๑๓)">(๑๓) หมายเรียกคดีแพ่งสามัญ</option>
+                                        <option value="(๑๔)">(๑๔) หมายเรียกคดีอาญา</option>
+                                        <option value="(๑๕)">(๑๕) บัญชีพยาน</option>
+                                        <option value="(๔๐ ก.)">(๔๐ ก.) ใบต่อคำคู่ความ</option>
+                                    </select>
+                                </div>
+                                <div class="sm:col-span-2">
+                                    <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อหัวเอกสาร (ใต้วงเล็บรหัสฟอร์ม)</label>
+                                    <input id="edDocumentTitle" oninput="App.syncEditorToPreview()" type="text" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold" placeholder="เช่น คำร้อง ขอปิดหมาย / คำแถลงปิดคดี" />
+                                </div>
+                            </div>
+
+                            <!-- Lawyer / Party Role Selector + Auto-Fill Button -->
+                            <div class="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <span class="text-xs font-bold text-slate-800">ฐานะผู้ยื่นคำคู่ความ / ทนายความ</span>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <button type="button" onclick="App.quickFillProfile('LAWYER_PLAINTIFF')" class="px-2 py-1 rounded bg-blue-100 hover:bg-blue-200 text-blue-800 text-[11px] font-semibold">ดึงข้อมูลทนายโจทก์ (ปิยะณัฐ)</button>
+                                        <button type="button" onclick="App.quickFillProfile('LAWYER_DEFENDANT')" class="px-2 py-1 rounded bg-teal-100 hover:bg-teal-200 text-teal-800 text-[11px] font-semibold">ดึงข้อมูลทนายจำเลย (เกรียงไกร)</button>
+                                        <button type="button" onclick="App.quickFillProfile('CLIENT')" class="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 text-[11px] font-semibold">ดึงข้อมูลลูกความในคดี</button>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-3 gap-2.5">
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">วันที่ยื่น</label>
+                                        <input id="edDocDay" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">เดือน</label>
+                                        <input id="edDocMonth" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">พ.ศ. (๒ หลักท้าย)</label>
+                                        <input id="edDocYear" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                </div>
+
+                                <!-- คดีหมายเลขดำที่ และ คดีหมายเลขแดง (ถ้าปล่อยว่าง ระบบจะโชว์เส้นประตามแบบพิมพ์ศาล) -->
+                                <div class="bg-white border border-slate-200 rounded-lg p-2.5 space-y-2">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[11px] font-bold text-slate-700">หมายเลขคดีมุมขวาบน (ถ้าปล่อยว่างจะแสดงเส้นประ <span class="font-normal text-slate-500">.................... /๒๕...............</span>)</span>
+                                    </div>
+                                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                        <div>
+                                            <label class="block text-[11px] text-slate-600 font-semibold">คดีหมายเลขดำที่</label>
+                                            <input id="edBlackCaseNo" oninput="App.syncEditorToPreview()" type="text" placeholder="เช่น อ ๓๙๘ หรือ ม ๑๐๘" class="w-full px-2 py-1 rounded border border-slate-300 text-xs font-medium" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-[11px] text-slate-600">พ.ศ. คดีดำ (๒ หลักท้าย)</label>
+                                            <input id="edBlackCaseYear" oninput="App.syncEditorToPreview()" type="text" placeholder="เช่น ๖๘ (เว้นว่างได้)" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-[11px] text-rose-700 font-semibold">คดีหมายเลขแดง</label>
+                                            <input id="edRedCaseNo" oninput="App.syncEditorToPreview()" type="text" placeholder="เว้นว่างได้ถ้ายังไม่มี" class="w-full px-2 py-1 rounded border border-rose-300 text-xs font-medium text-rose-800" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-[11px] text-rose-700">พ.ศ. คดีแดง (๒ หลักท้าย)</label>
+                                            <input id="edRedCaseYear" oninput="App.syncEditorToPreview()" type="text" placeholder="เว้นว่างได้ถ้ายังไม่มี" class="w-full px-2 py-1 rounded border border-rose-300 text-xs text-rose-800" />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">ข้าพเจ้า (ชื่อผู้ร้อง/โจทก์/จำเลย/ทนาย)</label>
+                                        <input id="edRequesterFullName" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs font-medium" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">ในฐานะ (ทนายโจทก์ / ทนายจำเลยที่ ๒ / โจทก์)</label>
+                                        <input id="edRequesterStatus" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs font-semibold" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">เลขประจำตัวประชาชน (๑๓ หลัก)</label>
+                                        <input id="edRequesterCitizenId" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label class="block text-[11px] text-slate-500">อาชีพ</label>
+                                            <input id="edRequesterOccupation" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                        </div>
+                                        <div>
+                                            <label class="block text-[11px] text-slate-500">อายุ (ปี)</label>
+                                            <input id="edRequesterAge" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">บ้านเลขที่</label>
+                                        <input id="edRequesterHouseNo" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">หมู่ที่</label>
+                                        <input id="edRequesterMoo" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">ถนน</label>
+                                        <input id="edRequesterRoad" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">ตำบล/แขวง</label>
+                                        <input id="edRequesterSubDistrict" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">อำเภอ/เขต</label>
+                                        <input id="edRequesterDistrict" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">จังหวัด</label>
+                                        <input id="edRequesterProvince" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">รหัสไปรษณีย์</label>
+                                        <input id="edRequesterPostalCode" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">โทรศัพท์</label>
+                                        <input id="edRequesterPhone" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Smart Text Importer & Formatter (นำข้อความคำร้องดิบมาแยกข้อ ๑, ข้อ ๒ ลงฟอร์มอัตโนมัติ) -->
+                            <div class="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 space-y-2.5">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                                        <i data-lucide="wand-2" class="w-4 h-4 text-amber-600"></i>
+                                        <span>เครื่องมือนำข้อความคำร้อง/คำฟ้องลงฟอร์ม & จัดรูปแบบอัตโนมัติ</span>
+                                    </span>
+                                    <button type="button" onclick="App.toggleSmartPasteBox()" class="text-[11px] font-semibold text-amber-800 underline">เปิด/ซ่อนช่องวางข้อความดิบ</button>
+                                </div>
+                                <div id="smartPasteContainer" class="hidden space-y-2">
+                                    <textarea id="rawPetitionPasteInput" rows="4" class="w-full p-2.5 rounded-lg border border-amber-300 text-xs bg-white" placeholder="วางข้อความคำฟ้อง คำร้อง หรือคำแถลงปิดคดียาวๆ ที่นี่ ระบบจะแยก ข้อ ๑., ข้อ ๒., ย่อหน้า, คำลงท้าย และจัดลงกระดาษฟอร์มศาลพร้อมต่อใบต่อ (๔๐ ก.) ให้อัตโนมัติ..."></textarea>
+                                    <div class="flex flex-wrap gap-2">
+                                        <button type="button" onclick="App.parseRawTextIntoClauses()" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">
+                                            ⚡ แยกข้อและจัดลงฟอร์มศาลทันที
+                                        </button>
+                                        <button type="button" onclick="App.insertLegalPhrase('ขอศาลได้โปรดอนุญาต')" class="px-2.5 py-1.5 rounded-lg bg-white border border-amber-300 text-xs hover:bg-amber-100">
+                                            + ขอศาลได้โปรดอนุญาต
+                                        </button>
+                                        <button type="button" onclick="App.insertLegalPhrase('ขอศาลได้โปรดพิจารณาพิพากษายกฟ้องโจทก์ ปล่อยจำเลยพ้นข้อหาไป')" class="px-2.5 py-1.5 rounded-lg bg-white border border-amber-300 text-xs hover:bg-amber-100">
+                                            + คำขอท้ายคำให้การจำเลย (ยกฟ้อง)
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Dynamic Clauses or Witness Table Editor -->
+                            <div class="space-y-3">
+                                <div class="flex items-center justify-between gap-2">
+                                    <label class="text-xs font-bold text-slate-800" id="clausesSectionLabel">รายการเนื้อหาคำคู่ความ (ข้อ ๑, ข้อ ๒, ...)</label>
+                                    <div class="flex items-center gap-1.5">
+                                        <button type="button" onclick="App.formatAllClausesThaiSpacing()" class="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 text-xs font-semibold hover:bg-amber-200" title="จัดระเบียบการเคาะวรรคตามระบบภาษาไทย ๑ เคาะมาตรฐาน">
+                                            ✨ จัดเคาะวรรคภาษาไทย
+                                        </button>
+                                        <button type="button" onclick="App.addClauseItem()" class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800">
+                                            + เพิ่มข้อ / รายการพยาน
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="clausesEditorList" class="space-y-3 max-h-[380px] overflow-y-auto pr-1"></div>
+
+                                <!-- ตัวเลือกแสดง/ซ่อน ข้อความ "ขอศาลได้โปรดอนุญาต" ย่อหน้าสุดท้ายก่อน ควรมิควรแล้วแต่จะโปรด -->
+                                <div class="bg-amber-50/80 border border-amber-200 rounded-xl p-3 space-y-2">
+                                    <div class="flex flex-wrap items-center justify-between gap-2">
+                                        <label class="inline-flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
+                                            <input id="edShowPermission" type="checkbox" onchange="App.syncEditorToPreview()" class="rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
+                                            <span>แสดงข้อความ "ขอศาลได้โปรดอนุญาต" (อยู่ย่อหน้าสุดท้าย ก่อน ควรมิควรแล้วแต่จะโปรด)</span>
+                                        </label>
+                                    </div>
+                                    <div>
+                                        <input id="edPermissionText" oninput="App.syncEditorToPreview()" type="text" value="ขอศาลได้โปรดอนุญาต" placeholder="ขอศาลได้โปรดอนุญาต" class="w-full px-2.5 py-1 rounded border border-amber-300 text-xs bg-white font-medium" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Signer, Drafter, Typist & E-Signature / Wet Signature Mode Selection -->
+                            <div class="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <div class="text-xs font-bold text-slate-800">การลงลายมือชื่อ ผู้เรียง และผู้พิมพ์ (เลือกใช้ลายเซ็นอิเล็กทรอนิกส์ หรือเว้นว่างเพื่อเซ็นจริง)</div>
+                                </div>
+
+                                <!-- ตัวเลือกโหมดลายเซ็น: ลายเซ็นอิเล็กทรอนิกส์ vs เว้นว่างให้เซ็นจริงในเอกสารที่สั่งพิมพ์ -->
+                                <div class="bg-white border border-indigo-200 rounded-xl p-3 space-y-2.5">
+                                    <div class="flex flex-wrap items-center justify-between gap-2">
+                                        <label class="text-xs font-bold text-indigo-950">โหมดลายเซ็นในเอกสารที่สั่งพิมพ์:</label>
+                                        <select id="edSigningModeSelect" onchange="App.setStudioSigningMode(this.value)" class="px-2.5 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50/70 text-xs font-bold text-indigo-950">
+                                            <option value="ELECTRONIC">✍️ แสดงลายเซ็นอิเล็กทรอนิกส์ (ตามที่เลือกด้านล่าง)</option>
+                                            <option value="WET_SIGNATURE">🖨️ เว้นว่างทุกช่องเพื่อให้ผู้เซ็นเซ็นจริงในเอกสารที่สั่งพิมพ์</option>
+                                        </select>
+                                    </div>
+                                    <div id="edIndividualSigToggles" class="flex flex-wrap items-center gap-4 pt-1 border-t border-slate-100 text-[11px] font-semibold text-slate-700">
+                                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                                            <input type="checkbox" id="edShowMainSigChk" checked onchange="App.onToggleIndividualSigCheckbox()" class="rounded text-indigo-600" />
+                                            <span>แสดงลายเซ็นผู้ลงนามหลัก (โจทก์/จำเลย/ผู้ร้อง)</span>
+                                        </label>
+                                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                                            <input type="checkbox" id="edShowDrafterSigChk" checked onchange="App.onToggleIndividualSigCheckbox()" class="rounded text-indigo-600" />
+                                            <span>แสดงลายเซ็นผู้เรียง</span>
+                                        </label>
+                                        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                                            <input type="checkbox" id="edShowTypistSigChk" checked onchange="App.onToggleIndividualSigCheckbox()" class="rounded text-indigo-600" />
+                                            <span>แสดงลายเซ็นผู้พิมพ์/เขียน</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">ชื่อผู้ลงนามหลัก</label>
+                                        <input id="edSignerName" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs font-semibold" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">ตำแหน่งใต้เส้นลงนาม</label>
+                                        <input id="edSignerRole" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500">ทนายความผู้เรียง</label>
+                                        <input id="edDrafterName" oninput="App.syncEditorToPreview()" type="text" class="w-full px-2.5 py-1 rounded border border-slate-300 text-xs" />
+                                    </div>
+                                    <div>
+                                        <div class="flex items-center justify-between">
+                                            <label class="block text-[11px] text-slate-500">เสมียนทนายผู้พิมพ์/เขียน (ในสังกัดทนาย)</label>
+                                            <button type="button" onclick="App.openManageClerkModal()" class="text-[10px] font-bold text-teal-700 hover:underline">+ ตั้งเสมียน</button>
+                                        </div>
+                                        <div class="flex gap-1">
+                                            <select id="edAssignedClerkSelect" onchange="App.onSelectAssignedClerkInStudio(this.value)" class="w-1/2 px-1.5 py-1 rounded border border-teal-300 bg-teal-50/70 text-[11px] font-semibold text-teal-950"></select>
+                                            <input id="edTypistName" oninput="App.syncEditorToPreview()" type="text" class="w-1/2 px-2 py-1 rounded border border-slate-300 text-xs" />
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500 mb-1">เลือกลายเซ็นอิเล็กทรอนิกส์ผู้ยื่น (หรือเลือกเว้นว่างเพื่อเซ็นจริง)</label>
+                                        <select id="edSignatureSelect" onchange="App.onSelectSignerSignature(this.value)" class="w-full px-2.5 py-1.5 rounded border border-slate-300 text-xs bg-white"></select>
+                                    </div>
+                                    <div class="flex items-end gap-1.5">
+                                        <button type="button" onclick="App.switchTab('esign')" class="flex-1 px-2.5 py-1.5 rounded border border-amber-500 bg-amber-50 text-amber-900 font-semibold text-xs hover:bg-amber-100">
+                                            ✍️ วาด / อัปโหลด &amp; ลบพื้นหลังลายเซ็น
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Live A4 Court Form Paper Preview -->
+                        <div class="xl:col-span-7 space-y-3">
+                            <div class="flex items-center justify-between bg-white px-4 py-2.5 rounded-xl border border-slate-200 shadow-sm no-print">
+                                <div class="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                                    <span>พรีวิวกระดาษแบบพิมพ์ศาลยุติธรรม A4 (พร้อมตราครุฑ และใบต่อ ๔๐ ก. อัตโนมัติ)</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="App.printCourtPaper('studio')" class="px-3 py-1 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800">
+                                        🖨️ สั่งพิมพ์หน้านี้ทันที
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div id="studioPaperPreview" class="court-paper-wrapper"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 4. VIEW: CRIMINAL & CIVIL PROCEDURE WORKFLOW (ป.วิ.อาญา & ป.วิ.แพ่ง) -->
+                <section id="view-procedure" class="hidden space-y-6">
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+                        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-900">แผนผังขั้นตอนวิธีพิจารณาความอาญา (ป.วิ.อ.) และวิธีพิจารณาความแพ่ง (ป.วิ.พ.)</h2>
+                                <p class="text-xs text-slate-500">คลิกที่แบบฟอร์มในแต่ละขั้นตอนเพื่อสร้างคำฟ้อง คำร้อง คำให้การ หรือบัญชีพยานในฐานะทนายโจทก์หรือทนายจำเลยได้ทันที</p>
+                            </div>
+                        </div>
+
+                        <!-- Criminal Procedure Track (ป.วิ.อาญา) -->
+                        <div class="space-y-3">
+                            <div class="flex items-center gap-2">
+                                <span class="px-3 py-1 rounded-lg bg-rose-600 text-white font-bold text-xs">ประมวลกฎหมายวิธีพิจารณาความอาญา (ป.วิ.อ.)</span>
+                                <span class="text-xs text-slate-600 font-medium">ครอบคลุมตั้งแต่ชั้นยื่นฟ้อง ไต่สวนมูลฟ้อง ยื่นคำให้การจำเลย บัญชีพยาน จนถึงคำแถลงปิดคดีและอุทธรณ์/ฎีกา</span>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="criminalProcedureGrid"></div>
+                        </div>
+
+                        <!-- Civil Procedure Track (ป.วิ.แพ่ง) -->
+                        <div class="space-y-3 pt-4 border-t border-slate-200">
+                            <div class="flex items-center gap-2">
+                                <span class="px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold text-xs">ประมวลกฎหมายวิธีพิจารณาความแพ่ง (ป.วิ.พ.)</span>
+                                <span class="text-xs text-slate-600 font-medium">ครอบคลุมคดีแพ่งสามัญ คดีมโนสาเร่ คำขอท้ายฟ้อง การขอปิดหมาย คำให้การจำเลย และชั้นบังคับคดี</span>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="civilProcedureGrid"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 5. VIEW: ELECTRONIC SIGNATURE PAD & IMAGE BACKGROUND REMOVER (ระบบลายเซ็นอิเล็กทรอนิกส์ + อัปโหลดไฟล์ภาพลายเซ็น & ลบพื้นหลังลายเซ็น) -->
+                <section id="view-esign" class="hidden space-y-6">
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        <div class="lg:col-span-6 space-y-6">
+                            <!-- Card 1: ข้อมูลเจ้าของลายเซ็น + กระดานวาดลายเซ็น -->
+                            <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                                <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                                    <i data-lucide="pen-tool" class="w-5 h-5 text-amber-600"></i>
+                                    <span>๑. กระดานวาดลายมือชื่ออิเล็กทรอนิกส์ (รองรับเมาส์ / ปากกา Stylus / มือถือ)</span>
+                                </h2>
+
+                                <div class="space-y-3">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อ-นามสกุล เจ้าของลายเซ็น</label>
+                                        <input id="sigSignerName" type="text" placeholder="เช่น นายเกรียงไกร โล่ห์ทวนชัย / นายปิยะณัฐ วัชราภรณ์" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs font-medium" />
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-xs font-semibold text-slate-700 mb-1">บทบาทในแบบพิมพ์ศาล</label>
+                                            <select id="sigSignerRole" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs">
+                                                <option value="ทนายโจทก์ / ผู้เรียง">ทนายโจทก์ / ผู้เรียง</option>
+                                                <option value="ทนายจำเลย / ผู้เรียง">ทนายจำเลย / ผู้เรียง</option>
+                                                <option value="โจทก์ / ผู้แต่งทนาย">โจทก์ / ผู้แต่งทนาย</option>
+                                                <option value="จำเลย / ผู้ร้อง">จำเลย / ผู้ร้อง</option>
+                                                <option value="ผู้พิมพ์ / ผู้รับมอบฉันทะ">เสมียนทนาย (ผู้พิมพ์/ผู้รับมอบฉันทะ)</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-semibold text-slate-700 mb-1">เลขใบอนุญาตทนายความ / บัตรประชาชน</label>
+                                            <input id="sigLicenseNo" type="text" placeholder="เช่น ใบอนุญาต 7834/2529" class="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs" />
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1">
+                                            <label class="text-xs font-semibold text-slate-700">วาดลายเซ็นด้านล่าง</label>
+                                            <div class="flex items-center gap-2">
+                                                <button type="button" onclick="App.setPenColor('#1e3a8a')" class="w-5 h-5 rounded-full bg-blue-900 border-2 border-white shadow" title="หมึกน้ำเงินศาล"></button>
+                                                <button type="button" onclick="App.setPenColor('#0f172a')" class="w-5 h-5 rounded-full bg-slate-900 border-2 border-white shadow" title="หมึกดำ"></button>
+                                                <button type="button" onclick="App.clearSignatureCanvas()" class="text-xs text-rose-600 font-semibold hover:underline ml-2">ล้างกระดาน</button>
+                                            </div>
+                                        </div>
+                                        <div class="border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 p-2">
+                                            <canvas id="signatureCanvas" width="460" height="150" class="w-full h-[150px] bg-white rounded-lg cursor-crosshair touch-none"></canvas>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex flex-wrap gap-2 pt-1">
+                                        <button type="button" onclick="App.saveDrawnSignature()" class="flex-1 py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow">
+                                            💾 บันทึกลายเซ็นที่วาดลงฐานข้อมูล SmartLaws
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Card 2: อัปโหลดไฟล์ภาพลายเซ็น & ระบบลบพื้นหลังลายเซ็นอัตโนมัติ (Image Signature Upload & Background Remover) -->
+                            <div class="bg-white rounded-2xl border border-indigo-200 p-6 shadow-sm space-y-4">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                        <h2 class="text-base font-bold text-indigo-950 flex items-center gap-2">
+                                            <span>🖼️ ๒. เพิ่มลายเซ็นในรูปแบบไฟล์ภาพ &amp; ระบบลบพื้นหลังลายเซ็นอัตโนมัติ</span>
+                                        </h2>
+                                        <p class="text-xs text-slate-500">อัปโหลดภาพถ่ายลายเซ็นบนกระดาษ (JPG/PNG) ระบบจะตัดพื้นหลังสีขาว/เทาออกให้โปร่งใส (Transparent PNG) เพื่อวางทับเส้นประในแบบพิมพ์ศาลได้แนบเนียน</p>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                    <div class="sm:col-span-2 flex flex-wrap items-center gap-2">
+                                        <input id="sigUploadFileInput" type="file" accept="image/*" onchange="App.onSelectSignatureUploadFile(this)" class="flex-1 px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 text-xs" />
+                                        <button type="button" onclick="App.loadSamplePaperSignatureForBgRemoval()" class="px-3 py-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-bold text-xs">
+                                            📄 ทดลองโหลดภาพลายเซ็นบนกระดาษตัวอย่าง
+                                        </button>
+                                    </div>
+
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1">
+                                            <label class="font-semibold text-slate-700">ระดับการลบพื้นหลังกระดาษ (Threshold)</label>
+                                            <span id="sigBgThresholdLabel" class="font-bold text-indigo-700">210</span>
+                                        </div>
+                                        <input id="sigBgThresholdSlider" type="range" min="120" max="250" value="210" oninput="App.processSignatureBackgroundRemoval()" class="w-full accent-indigo-600 cursor-pointer" />
+                                    </div>
+
+                                    <div>
+                                        <label class="font-semibold text-slate-700 block mb-1">ปรับสีหมึกลายเซ็นหลังลบพื้นหลัง</label>
+                                        <select id="sigInkColorMode" onchange="App.processSignatureBackgroundRemoval()" class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold">
+                                            <option value="NAVY_COURT">หมึกน้ำเงินเข้มมาตรฐานศาล (#1e3a8a)</option>
+                                            <option value="BLACK_INK">หมึกดำคมชัด (#0f172a)</option>
+                                            <option value="ORIGINAL">คงสีหมึกตามไฟล์ภาพต้นฉบับ</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="sm:col-span-2 space-y-1.5">
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-[11px] font-bold text-slate-600">พรีวิวลายเซ็นหลังลบพื้นหลัง (ตารางหมากรุก = พื้นหลังโปร่งใส 100%)</span>
+                                            <label class="inline-flex items-center gap-1.5 text-[11px] font-bold text-indigo-800 cursor-pointer">
+                                                <input type="checkbox" id="sigAutoRemoveBgChk" checked onchange="App.processSignatureBackgroundRemoval()" class="rounded text-indigo-600" />
+                                                <span>เปิดระบบลบพื้นหลังลายเซ็นอัตโนมัติ</span>
+                                            </label>
+                                        </div>
+                                        <div class="p-3 rounded-xl border border-indigo-200 flex items-center justify-center" style="background-image: linear-gradient(45deg, #e2e8f0 25%, transparent 25%), linear-gradient(-45deg, #e2e8f0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e2e8f0 75%), linear-gradient(-45deg, transparent 75%, #e2e8f0 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0; background-color: #f8fafc;">
+                                            <canvas id="sigUploadPreviewCanvas" width="420" height="130" class="max-w-full h-[130px] rounded"></canvas>
+                                        </div>
+                                    </div>
+
+                                    <div class="sm:col-span-2 pt-1">
+                                        <button type="button" onclick="App.saveUploadedProcessedSignature()" class="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow">
+                                            ✨ บันทึกลายเซ็นไฟล์ภาพ (ที่ลบพื้นหลังแล้ว) ลงฐานข้อมูล SmartLaws
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-6 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <h2 class="text-base font-bold text-slate-900">คลังลายเซ็นอิเล็กทรอนิกส์ที่พร้อมใช้งานในแบบพิมพ์ศาล</h2>
+                                <span class="text-xs text-slate-500">เลือกใช้ในฟอร์ม หรือเลือกเว้นว่างเพื่อเซ็นจริงตอนพิมพ์ได้</span>
+                            </div>
+                            <div id="signaturesGalleryGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 6. VIEW: PRINT CENTER (ศูนย์พิมพ์แบบฟอร์มศาลครบชุด) -->
+                <section id="view-printcenter" class="hidden space-y-6">
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4 no-print">
+                        <div class="flex flex-wrap items-center justify-between gap-4">
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-900">ศูนย์พิมพ์แบบฟอร์มศาลครบชุด (Batch Print & Export Center)</h2>
+                                <p class="text-xs text-slate-500">เลือกสำนวนคดีเพื่อสั่งพิมพ์เอกสารทั้งหมดในคดี และเลือกได้ว่าจะพิมพ์พร้อมลายเซ็นอิเล็กทรอนิกส์ หรือเว้นว่างให้ผู้เซ็นเซ็นจริงในกระดาษที่สั่งพิมพ์</p>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <select id="batchPrintCaseSelect" onchange="App.renderPrintCenter(this.value)" class="px-3.5 py-2 rounded-lg border border-slate-300 text-xs font-semibold"></select>
+                                <select id="batchPrintSigningModeSelect" onchange="App.setBatchPrintSigningMode(this.value)" class="px-3.5 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-950 text-xs font-bold">
+                                    <option value="DOC_DEFAULT">✍️ ใช้ลายเซ็นอิเล็กทรอนิกส์ตามเอกสาร</option>
+                                    <option value="WET_SIGNATURE">🖨️ เว้นว่างทุกช่องเพื่อให้ผู้เซ็นเซ็นจริงในเอกสารที่สั่งพิมพ์</option>
+                                </select>
+                                <button onclick="App.printCourtPaper('batch')" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs shadow">
+                                    🖨️ พิมพ์ชุดสำนวนที่เลือกทั้งหมด (A4)
+                                </button>
+                            </div>
+                        </div>
+                        <div id="printCenterDocCheckboxes" class="flex flex-wrap gap-2 pt-2"></div>
+                    </div>
+
+                    <div id="batchPrintPreviewContainer" class="court-paper-wrapper"></div>
+                </section>
+
+                <!-- 7. VIEW: REPORTS & ANALYTICS (ระบบรายงาน) -->
+                <section id="view-reports" class="hidden space-y-6">
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+                        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-900">ระบบรายงานการบริหารคดีความ และสรุปทุนทรัพย์/เอกสารศาล</h2>
+                                <p class="text-xs text-slate-500">วิเคราะห์แยกตามประเภทคดี (อาญา/แพ่ง) และแยกตามบทบาททนายความ (ทนายโจทก์/ทนายจำเลย)</p>
+                            </div>
+                            <button onclick="window.print()" class="no-print px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold">
+                                🖨️ พิมพ์รายงานสรุปผู้บริหาร
+                            </button>
+                        </div>
+
+                        <div id="reportsSummaryContent" class="space-y-6"></div>
+                    </div>
+                </section>
+
+                <!-- 8. VIEW: CASE FILE REPOSITORY & COURT FORM DIRECTORY (คลังไฟล์เอกสารและลิงก์ตามสารบัญแบบพิมพ์ศาล (๐๐)-(๑๕)) -->
+                <section id="view-files" class="hidden space-y-6">
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                                    <span>📂 คลังไฟล์สำนวนคดี &amp; เอกสารอ้างอิงตามสารบัญแบบพิมพ์ศาล (แบบ ๑ – ๑๕)</span>
+                                </h2>
+                                <p class="text-xs text-slate-500">จัดเก็บไฟล์เอกสาร PDF, ไฟล์รูปภาพ, ลิงก์ไฟล์ภายนอก และแบบพิมพ์ศาลของแต่ละสำนวนคดี พร้อมสถานะไฟล์และป๊อบอัพเปิดอ่าน PDF/รูปภาพได้ทันที</p>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button onclick="App.openPopupFileViewer({ title: '00_สารบัญแบบพิมพ์ศาล.pdf (ตารางอ้างอิงแบบพิมพ์ศาลมาตรฐาน)', storageType: 'PDF', url: '/api/files/stream-sample/form-00', status: 'เอกสารมาตรฐานศาล' })" class="px-3.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-bold">
+                                    📖 เปิดดูไฟล์ 00_สารบัญแบบพิมพ์ศาล.pdf
+                                </button>
+                                <button onclick="App.openUploadFileModal('PDF')" class="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow">
+                                    + อัปโหลดไฟล์ PDF / รูปภาพลงสำนวน
+                                </button>
+                                <button onclick="App.openUploadFileModal('LINK')" class="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow">
+                                    🔗 แนบ Link ไฟล์เอกสาร
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- ตัวกรองสำนวนคดี และหมวดสารบัญแบบพิมพ์ศาล -->
+                        <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-600 mb-0.5">เลือกสำนวนคดี</label>
+                                    <select id="filesFilterCaseSelect" onchange="App.renderFilesDirectoryView()" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold bg-white min-w-[260px]"></select>
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-600 mb-0.5">กรองตามรหัสสารบัญแบบพิมพ์ศาล</label>
+                                    <select id="filesFilterFormCodeSelect" onchange="App.renderFilesDirectoryView()" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold bg-white">
+                                        <option value="ALL">แสดงทุกหมวดตามสารบัญแบบพิมพ์ศาล (๐๐-๑๕)</option>
+                                        <option value="(๐๐)">(๐๐) สารบัญแบบพิมพ์ศาล</option>
+                                        <option value="(๑)">(๑) ปกหน้าสำนวน</option>
+                                        <option value="(๒)">(๒) หน้าสำนวน</option>
+                                        <option value="(๓)">(๓) สารบาญสำนวน</option>
+                                        <option value="(๔)">(๔) คำฟ้อง</option>
+                                        <option value="(๕)">(๕) คำขอท้ายคำฟ้องแพ่ง</option>
+                                        <option value="(๖)">(๖) คำขอท้ายคำฟ้องอาญา</option>
+                                        <option value="(๗)">(๗) คำร้อง / คำแถลง / คำขอ</option>
+                                        <option value="(๘)">(๘) บัญชีทรัพย์</option>
+                                        <option value="(๙)">(๙) ใบแต่งทนายความ</option>
+                                        <option value="(๑๐)">(๑๐) ใบมอบฉันทะ</option>
+                                        <option value="(๑๑)">(๑๑) คำให้การจำเลย</option>
+                                        <option value="(๑๒)">(๑๒) หมายเรียกคดีมโนสาเร่</option>
+                                        <option value="(๑๓)">(๑๓) หมายเรียกคดีแพ่งสามัญ</option>
+                                        <option value="(๑๔)">(๑๔) หมายเรียกคดีอาญา</option>
+                                        <option value="(๑๕)">(๑๕) บัญชีระบุพยาน</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-600 mb-0.5">กรองสถานะไฟล์</label>
+                                    <select id="filesFilterStatusSelect" onchange="App.renderFilesDirectoryView()" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold bg-white">
+                                        <option value="ALL">ทุกสถานะไฟล์</option>
+                                        <option value="ร่าง">ร่าง (Draft)</option>
+                                        <option value="ตรวจทานแล้ว">ตรวจทานแล้ว (Reviewed)</option>
+                                        <option value="ลงนามแล้ว">ลงนามแล้ว (Signed)</option>
+                                        <option value="ยื่นต่อศาลแล้ว">ยื่นต่อศาลแล้ว (Filed)</option>
+                                        <option value="ศาลรับคำคู่ความแล้ว">ศาลรับคำคู่ความแล้ว (Accepted)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- ปุ่มเปิดอ่านแบบพิมพ์ศาล PDF ต้นฉบับ (00-14) ในป๊อบอัพ -->
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-600 mb-0.5">เปิดอ่านแบบฟอร์มศาล PDF ต้นฉบับ (๐๐-๑๔)</label>
+                                <select onchange="if(this.value){ App.openOfficialCourtPdfInPopup(this.value); this.value=''; }" class="px-3 py-1.5 rounded-lg border border-amber-400 bg-amber-50 text-amber-950 text-xs font-bold">
+                                    <option value="">-- เลือกเปิดอ่านไฟล์ PDF ต้นฉบับในป๊อบอัพ --</option>
+                                    <option value="form-00">00_สารบัญแบบพิมพ์ศาล.pdf</option>
+                                    <option value="form-01">01_แบบฟอร์มปกหน้าสำนวน.pdf</option>
+                                    <option value="form-02">02_แบบฟอร์มหน้าสำนวน.pdf</option>
+                                    <option value="form-03">03_แบบฟอร์มสารบาญ.pdf</option>
+                                    <option value="form-04">04_แบบพิมพ์คำฟ้อง.pdf</option>
+                                    <option value="form-05">05_แบบฟอร์มคำขอท้ายคำฟ้องแพ่ง.pdf</option>
+                                    <option value="form-06">06_แบบฟอร์มคำขอท้ายคำฟ้องอาญา.pdf</option>
+                                    <option value="form-07">07_แบบฟอร์มคำร้อง.pdf</option>
+                                    <option value="form-08">08_แบบฟอร์มบัญชีทรัพย์.pdf</option>
+                                    <option value="form-09">09_แบบฟอร์มใบแต่งทนายความ.pdf</option>
+                                    <option value="form-10">10_แบบฟอร์มใบมอบฉันทะ.pdf</option>
+                                    <option value="form-11">11_แบบฟอร์มคำให้การจำเลย.pdf</option>
+                                    <option value="form-12">12_แบบฟอร์มหมายเรียกคดีมโนสาเร่.pdf</option>
+                                    <option value="form-13">13_แบบฟอร์มหมายเรียกคดีแพ่งสามัญ.pdf</option>
+                                    <option value="form-14">14_แบบฟอร์มหมายเรียกคดีอาญา.pdf</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="filesDirectoryTableContainer" class="overflow-x-auto"></div>
+                    </div>
+                </section>
+
+                <!-- 9. VIEW: SUBSCRIPTION, TRIAL & QUOTA PACKAGES (ระบบสมัครสมาชิกทดลองใช้ ๓ คดี, จ่ายเงินรายเดือน/รายปี/ซื้อโควต้า & แจ้งสลิปโอน) -->
+                <section id="view-subscription" class="hidden space-y-6">
+                    <!-- สถานะบัญชีทนายความและโควต้าปัจจุบัน -->
+                    <div id="currentUserQuotaBanner" class="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 rounded-2xl p-6 text-white shadow-lg"></div>
+
+                    <!-- ระบบจัดการเสมียนทนายภายใต้แอคเคาท์ทนายความ (เสมียน 1 คนทำงานให้ทนายได้มากกว่า 1 คน) -->
+                    <div class="bg-white rounded-2xl border border-teal-200 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                            <div>
+                                <h2 class="text-base font-bold text-slate-900">👨‍💼 เสมียนทนายประจำแอคเคาท์ทนายความ (เสมียน ๑ คนสามารถทำงานให้ทนายได้มากกว่า ๑ คน)</h2>
+                                <p class="text-xs text-slate-500">ทนายความสามารถแต่งตั้งเสมียนประจำสำนักงาน หรือแอดแอคเคาท์เสมียนที่มีอยู่แล้วเข้าสังกัด เพื่อทำหน้าที่เป็นผู้พิมพ์คำคู่ความและผู้รับมอบฉันทะ</p>
+                            </div>
+                            <button onclick="App.openManageClerkModal()" class="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white text-xs font-bold shadow">
+                                👨‍💼 + ตั้งเสมียนทนาย / แอดแอคเคาท์เสมียนให้ทนาย
+                            </button>
+                        </div>
+                        <div id="lawyerClerksManagementContainer" class="overflow-x-auto"></div>
+                    </div>
+
+                    <!-- ตารางแพ็กเกจรายเดือน รายปี และซื้อโควต้าจำนวนคดี -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-900">แพ็กเกจค่าบริการ (ทดลองใช้ฟรี ๓ คดี / รายเดือน / รายปี / ซื้อโควต้าจำนวนคดี)</h2>
+                                <p class="text-xs text-slate-500">เลือกแพ็กเกจที่ต้องการเพื่อแจ้งสลิปโอนเงินและรับโควต้าคดีเพิ่มทันทีเมื่อแอดมินอนุมัติ (แอดมินสามารถปรับตั้งราคาได้ทุกแพ็กเกจ)</p>
+                            </div>
+                            <button onclick="App.openRegisterLawyerModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow">
+                                📝 ลงทะเบียนทนายความใหม่ (รับสิทธิ์ทดลองฟรี ๓ คดี)
+                            </button>
+                        </div>
+
+                        <div id="subscriptionPlansGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4"></div>
+                    </div>
+
+                    <!-- ประวัติการแจ้งสลิปโอนเงินของทนายความ -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-base font-bold text-slate-900">รายการแจ้งยอดสลิปโอนเงินและประวัติการขอเพิ่มโควต้าคดี</h3>
+                                <p class="text-xs text-slate-500">คลิกที่ปุ่มดูสลิปเพื่อเปิดภาพหลักฐานการโอนในหน้าต่างป๊อบอัพ</p>
+                            </div>
+                            <button onclick="App.openPaymentSlipModal()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow">
+                                💳 + แจ้งยอดสลิปโอนเงินใหม่
+                            </button>
+                        </div>
+                        <div id="userPaymentSlipsTable" class="overflow-x-auto"></div>
+                    </div>
+                </section>
+
+                <!-- 10. VIEW: BACK-OFFICE ADMIN (ระบบแอดมิน: จัดการสมาชิกทนายความ, ตั้งราคาแพ็กเกจ, อนุมัติสลิปเพิ่มโควต้า & แม่แบบศาล) -->
+                <section id="view-backoffice" class="hidden space-y-6">
+                    <!-- Admin KPI & Quick Controls -->
+                    <div id="adminSummaryHeader" class="bg-gradient-to-r from-slate-900 to-amber-950 text-white rounded-2xl p-6 shadow-md"></div>
+
+                    <!-- 1. ระบบตรวจสอบสลิปโอนเงินและอนุมัติเพิ่มโควต้าอัตโนมัติ -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                            <div>
+                                <h2 class="text-base font-bold text-slate-900">🧾 ระบบตรวจสอบยอดสลิปโอนเงิน &amp; อนุมัติเพิ่มโควต้าคดี (Admin Slip Approval)</h2>
+                                <p class="text-xs text-slate-500">เมื่อแอดมินกด "อนุมัติสลิป &amp; เพิ่มโควต้า" ระบบจะบวกจำนวนโควต้าคดีและอัปเดตสถานะแพ็กเกจให้ทนายความโดยอัตโนมัติ</p>
+                            </div>
+                            <button onclick="App.openPaymentSlipModal()" class="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">
+                                + บันทึกรายการแจ้งสลิปโอน
+                            </button>
+                        </div>
+                        <div id="adminSlipsTableContainer" class="overflow-x-auto"></div>
+                    </div>
+
+                    <!-- 2. ระบบจัดการบัญชีทนายความสมาชิก & ปรับเพิ่มโควต้าคดี (รวมแอคเคาท์ทนายจากไฟล์ตัวอย่างคดีในระบบ) -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                            <div>
+                                <h2 class="text-base font-bold text-slate-900">👨‍⚖️ จัดการบัญชีสมาชิกทนายความ &amp; โควต้าจำนวนคดี (ทดลองใช้ฟรี ๓ คดี / รายเดือน / รายปี)</h2>
+                                <p class="text-xs text-slate-500">มีบัญชีทนายความจากไฟล์คดีตัวอย่างในระบบครบถ้วน (นายปิยะณัฐ วัชราภรณ์, นายเกรียงไกร โล่ห์ทวนชัย, นายชาญณรงค์ ผ่องแผ้ว) พร้อมปุ่มเพิ่มโควต้าและสลับบัญชี</p>
+                            </div>
+                            <button onclick="App.openRegisterLawyerModal()" class="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold">
+                                + เพิ่มบัญชีทนายความใหม่
+                            </button>
+                        </div>
+                        <div id="adminUsersTableContainer" class="overflow-x-auto"></div>
+                    </div>
+
+                    <!-- 2.5 ระบบผูกความสัมพันธ์ ทนายความ <-> เสมียนทนาย (เสมียน 1 คนทำงานให้ทนายได้มากกว่า 1 คน) -->
+                    <div class="bg-white rounded-2xl border border-teal-200 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                            <div>
+                                <h2 class="text-base font-bold text-slate-900">👨‍💼 จัดการความสัมพันธ์ ทนายความ &amp; เสมียนทนายในสังกัด (เสมียน ๑ คนทำงานให้ทนายได้หลายคน)</h2>
+                                <p class="text-xs text-slate-500">เสมียนทนายเป็นส่วนหนึ่งของแอคเคาท์ทนายความ โดยทนายแต่ละคนสามารถตั้งเสมียนหรือแอดแอคเคาท์เสมียนร่วมกันได้ (เช่น นายชาญณรงค์ ผ่องแผ้ว ทำงานให้ทั้ง ทนายปิยะณัฐ และ ทนายเกรียงไกร)</p>
+                            </div>
+                            <button onclick="App.openManageClerkModal()" class="px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-xs font-bold">
+                                + ตั้งเสมียนและแอดแอคเคาท์ให้ทนาย
+                            </button>
+                        </div>
+                        <div id="adminClerksMappingContainer" class="overflow-x-auto"></div>
+                    </div>
+
+                    <!-- 3. ระบบตั้งค่าราคาแพ็กเกจ (รายเดือน / รายปี / ซื้อโควต้าคดี) สำหรับแอดมิน -->
+                    <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                            <div>
+                                <h2 class="text-base font-bold text-slate-900">🏷️ ตั้งค่าราคาแพ็กเกจ รายเดือน / รายปี / ซื้อโควต้าจำนวนคดี (Admin Pricing Config)</h2>
+                                <p class="text-xs text-slate-500">แอดมินสามารถปรับราคา (บาท) จำนวนโควต้าคดีที่ได้รับ จำนวนวันใช้งาน และเลขบัญชีธนาคารรับโอนได้ตลอดเวลา</p>
+                            </div>
+                            <button onclick="App.openEditPlanModal(null)" class="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold">
+                                + สร้างแพ็กเกจราคาใหม่
+                            </button>
+                        </div>
+                        <div id="adminPlansConfigTable" class="overflow-x-auto"></div>
+                    </div>
+
+                    <!-- 4. ทะเบียนรายชื่อคดีในระบบบริการ (แอดมินเห็นเฉพาะชื่อคดีเพื่อตรวจสอบการใช้โควต้า ไม่สามารถเข้าดูข้อมูลคดีทนายได้) -->
+                    <div class="bg-white rounded-2xl border border-amber-300 p-6 shadow-sm space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                            <div>
+                                <h2 class="text-base font-bold text-slate-900">🔒 ทะเบียนรายชื่อคดีในระบบบริการ (แอดมินเห็นเฉพาะชื่อคดี — ปกป้องความลับสำนวนทนายความ)</h2>
+                                <p class="text-xs text-slate-500">ตามหลักความลับลูกความและทนายความ แอดมินระบบบริการจะเห็นเฉพาะชื่อคดีและทนายความผู้ถือโควต้าเท่านั้น ไม่สามารถเปิดอ่านคำฟ้อง คำร้อง รายชื่อคู่ความ หรือไฟล์ในสำนวนของทนายได้</p>
+                            </div>
+                            <span class="px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold">🔒 ปกปิดข้อมูลคดีทนายความ 100%</span>
+                        </div>
+                        <div id="adminServiceCasesTitleOnlyContainer" class="overflow-x-auto"></div>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+
+        <!-- Mobile Bottom Navigation -->
+        <nav class="mobile-bottom-nav no-print text-xs text-slate-300">
+            <button data-lawyer-only="true" onclick="App.switchTab('dashboard')" class="flex flex-col items-center gap-1 py-1">
+                <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+                <span>ภาพรวม</span>
+            </button>
+            <button data-lawyer-only="true" onclick="App.switchTab('files')" class="flex flex-col items-center gap-1 py-1">
+                <i data-lucide="folder-archive" class="w-4 h-4"></i>
+                <span>คลังไฟล์</span>
+            </button>
+            <button data-lawyer-only="true" onclick="App.switchTab('studio')" class="flex flex-col items-center gap-1 py-1 text-amber-400 font-bold">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                <span>ฟอร์มศาล</span>
+            </button>
+            <button onclick="App.switchTab('subscription')" class="flex flex-col items-center gap-1 py-1">
+                <i data-lucide="credit-card" class="w-4 h-4"></i>
+                <span>โควต้าคดี</span>
+            </button>
+            <button data-admin-only="true" onclick="App.switchTab('backoffice')" class="flex flex-col items-center gap-1 py-1">
+                <i data-lucide="shield-check" class="w-4 h-4"></i>
+                <span>แอดมิน</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- ==================== MODAL: NEW / EDIT CASE ==================== -->
+    <div id="caseModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+        <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+                <h3 class="font-bold text-base text-slate-900">เปิดสำนวนคดีใหม่ของทนายความ (พร้อมมอบหมายเสมียนทนายผู้รับผิดชอบคดี)</h3>
+                <button onclick="App.closeCaseModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ประเภทคดี</label>
+                    <select id="mdlCaseCategory" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold">
+                        <option value="อาญา">คดีอาญา (ป.วิ.อาญา)</option>
+                        <option value="แพ่ง">คดีแพ่ง (ป.วิ.แพ่ง)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ฐานะทนายความในคดีนี้</label>
+                    <select id="mdlLawyerRole" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold text-blue-900">
+                        <option value="ทนายโจทก์">ทนายโจทก์</option>
+                        <option value="ทนายจำเลย">ทนายจำเลย</option>
+                        <option value="ทนายผู้ร้อง">ทนายผู้ร้อง</option>
+                        <option value="ทนายผู้คัดค้าน">ทนายผู้คัดค้าน</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ศาล</label>
+                    <input id="mdlCourtName" type="text" value="จังหวัดศรีสะเกษ" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="font-semibold text-slate-700 block mb-1">คดีหมายเลขดำที่</label>
+                        <input id="mdlBlackNo" type="text" placeholder="เช่น อ ๓๙๘ หรือ ม ๑๐๘" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                    </div>
+                    <div>
+                        <label class="font-semibold text-slate-700 block mb-1">พ.ศ. (๒ หลัก)</label>
+                        <input id="mdlBlackYear" type="text" value="๖๙" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                    </div>
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ชื่อโจทก์</label>
+                    <input id="mdlPlaintiff" type="text" placeholder="ระบุชื่อโจทก์" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ชื่อจำเลย</label>
+                    <input id="mdlDefendant" type="text" placeholder="ระบุชื่อจำเลย" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ข้อหา / ฐานความผิด</label>
+                    <input id="mdlCharge" type="text" placeholder="เช่น ผิดสัญญากู้ยืมเงิน หรือ ร่วมกันฉ้อโกงประชาชน" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">จำนวนทุนทรัพย์ (บาท)</label>
+                    <input id="mdlClaimAmount" type="number" value="0" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2 bg-teal-50/70 border border-teal-200 rounded-xl p-3 space-y-1.5">
+                    <div class="flex items-center justify-between">
+                        <label class="font-bold text-teal-950 block">👨‍💼 มอบหมายแอคเคาท์เสมียนทนายผู้รับผิดชอบคดีนี้</label>
+                        <button type="button" onclick="App.openManageClerkModal()" class="text-[11px] font-bold text-teal-700 hover:underline">+ เพิ่มแอคเคาท์เสมียนทนาย</button>
+                    </div>
+                    <select id="mdlAssignedClerkId" class="w-full px-3 py-2 rounded-lg border border-teal-300 bg-white font-bold text-slate-900"></select>
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">สรุปข้อเท็จจริงและแนวทางต่อสู้คดี</label>
+                    <textarea id="mdlSummary" rows="3" class="w-full px-3 py-2 rounded-lg border border-slate-300"></textarea>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button onclick="App.closeCaseModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-xs font-semibold">ยกเลิก</button>
+                <button onclick="App.createNewCase()" class="px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">บันทึกสำนวนคดี</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SHARED MODAL 1: POPUP PDF / IMAGE / COURT FORM VIEWER ==================== -->
+    <div id="filePreviewModal" class="fixed inset-0 z-50 hidden bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 lg:p-6 no-print">
+        <div class="bg-white rounded-2xl max-w-6xl w-full h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="bg-slate-900 text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5">
+                    <span id="popupViewerBadge" class="px-2.5 py-0.5 rounded bg-amber-400 text-slate-950 text-xs font-extrabold">PDF</span>
+                    <div>
+                        <h3 id="popupViewerTitle" class="font-bold text-sm lg:text-base">เปิดอ่านไฟล์เอกสารสำนวนคดี</h3>
+                        <p id="popupViewerSub" class="text-[11px] text-slate-400"></p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a id="popupViewerDownloadBtn" href="#" target="_blank" download class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-amber-300">
+                        ⬇️ ดาวน์โหลด / เปิดแท็บใหม่
+                    </a>
+                    <button onclick="App.closePopupFileViewer()" class="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold">
+                        ✕ ปิดหน้าต่าง
+                    </button>
+                </div>
+            </div>
+            <div id="popupViewerBody" class="flex-1 bg-slate-100 overflow-auto flex items-center justify-center p-4"></div>
+        </div>
+    </div>
+
+    <!-- ==================== SHARED MODAL 2: UPLOAD FILE / IMAGE / LINK TO CASE DIRECTORY ==================== -->
+    <div id="uploadFileModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+        <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+                <h3 class="font-bold text-base text-slate-900">📂 จัดเก็บไฟล์เอกสาร / รูปภาพ / ลิงก์ไฟล์ ตามสารบัญแบบพิมพ์ศาล</h3>
+                <button onclick="App.closeUploadFileModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">เลือกสำนวนคดี</label>
+                    <select id="upCaseId" onchange="App.onUploadModalCaseChange(this.value)" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-semibold"></select>
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">อ้างอิงสารบัญแบบพิมพ์ศาล (พร้อมสถานะจำนวนไฟล์และจำนวนหน้า)</label>
+                    <select id="upFormCode" onchange="App.onUploadModalFormCodeChange(this.value)" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold">
+                        <option value="(๑)">(๑) ปกหน้าสำนวน</option>
+                        <option value="(๒)">(๒) หน้าสำนวน</option>
+                        <option value="(๓)">(๓) สารบาญสำนวน</option>
+                        <option value="(๔)">(๔) แบบพิมพ์คำฟ้อง</option>
+                        <option value="(๕)">(๕) คำขอท้ายคำฟ้องแพ่ง</option>
+                        <option value="(๖)">(๖) คำขอท้ายคำฟ้องอาญา</option>
+                        <option value="(๗)" selected>(๗) คำร้อง / คำแถลง / คำขอ</option>
+                        <option value="(๘)">(๘) บัญชีทรัพย์</option>
+                        <option value="(๙)">(๙) ใบแต่งทนายความ</option>
+                        <option value="(๑๐)">(๑๐) ใบมอบฉันทะ</option>
+                        <option value="(๑๑)">(๑๑) คำให้การจำเลย</option>
+                        <option value="(๑๒)">(๑๒) หมายเรียกคดีมโนสาเร่</option>
+                        <option value="(๑๓)">(๑๓) หมายเรียกคดีแพ่งสามัญ</option>
+                        <option value="(๑๔)">(๑๔) หมายเรียกคดีอาญา</option>
+                        <option value="(๑๕)">(๑๕) บัญชีระบุพยาน</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">สถานะไฟล์เอกสาร</label>
+                    <select id="upFileStatus" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-semibold">
+                        <option value="ร่าง">ร่าง (Draft)</option>
+                        <option value="ตรวจทานแล้ว">ตรวจทานแล้ว (Reviewed)</option>
+                        <option value="ลงนามแล้ว">ลงนามแล้ว (Signed)</option>
+                        <option value="ยื่นต่อศาลแล้ว" selected>ยื่นต่อศาลแล้ว (Filed)</option>
+                        <option value="ศาลรับคำคู่ความแล้ว">ศาลรับคำคู่ความแล้ว (Accepted)</option>
+                    </select>
+                </div>
+                <div id="upFormCodeStatusBadge" class="sm:col-span-2"></div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">ชื่อไฟล์เอกสาร / คำคู่ความ</label>
+                    <input id="upFileTitle" type="text" placeholder="เช่น คำร้องขอขยายเวลายื่นคำให้การ หรือ สำเนาสัญญากู้ยืมเงิน" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-medium" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">รูปแบบการจัดเก็บ</label>
+                    <select id="upStorageType" onchange="App.onChangeUploadStorageType(this.value)" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold">
+                        <option value="PDF">ไฟล์ PDF (.pdf)</option>
+                        <option value="IMAGE">ไฟล์รูปภาพ (.png / .jpg)</option>
+                        <option value="LINK">ลิงก์ไฟล์ภายนอก (URL / Drive / e-Filing)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">จำนวนแผ่น</label>
+                    <input id="upPageCount" type="number" value="1" min="1" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div id="upFilePickerRow" class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">เลือกไฟล์ PDF หรือไฟล์รูปภาพจากเครื่อง</label>
+                    <input id="upFileInput" type="file" accept=".pdf,image/*" onchange="App.onSelectAttachmentFile(this)" class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50" />
+                </div>
+                <div id="upLinkInputRow" class="sm:col-span-2 hidden">
+                    <label class="font-semibold text-slate-700 block mb-1">ระบุ URL หรือ Link ไฟล์เอกสาร</label>
+                    <input id="upFileUrl" type="text" placeholder="เช่น https://drive.google.com/... หรือ /api/files/stream-sample/form-04" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">หมายเหตุการจัดเก็บตามสารบัญสำนวน</label>
+                    <input id="upRemark" type="text" placeholder="เช่น เอกสารแนบท้ายคำฟ้องหมายเลข ๑" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button onclick="App.closeUploadFileModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-xs font-semibold">ยกเลิก</button>
+                <button onclick="App.submitUploadFileAttachment()" class="px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">💾 บันทึกเข้าคลังสารบัญสำนวน</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SHARED MODAL 3: REGISTER LAWYER FOR 3-CASE FREE TRIAL ==================== -->
+    <div id="registerLawyerModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+        <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div>
+                    <h3 class="font-bold text-base text-slate-900">📝 ลงทะเบียนทนายความสมาชิกใหม่ (รับสิทธิ์ทดลองใช้ฟรี ๓ คดี)</h3>
+                    <p class="text-[11px] text-slate-500">ระบบจะสร้างบัญชีทนายความ โปรไฟล์ผู้เรียง และลายเซ็นอิเล็กทรอนิกส์ให้พร้อมใช้งานทันที</p>
+                </div>
+                <button onclick="App.closeRegisterLawyerModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ชื่อผู้ใช้งาน (Username) *</label>
+                    <input id="regUsername" type="text" placeholder="เช่น lawyer_somchai" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-semibold" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">รหัสผ่าน (Password)</label>
+                    <input id="regPassword" type="password" value="123456" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">ชื่อ-นามสกุลทนายความ *</label>
+                    <input id="regFullName" type="text" placeholder="เช่น นายสมชาย ยุติธรรม" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">เลขใบอนุญาตว่าความ</label>
+                    <input id="regLicenseNo" type="text" placeholder="เช่น 12580/2558" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">เลขบัตรประจำตัวประชาชน ๑๓ หลัก</label>
+                    <input id="regCitizenId" type="text" placeholder="เช่น 3-3301-00555-12-9" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">เบอร์โทรศัพท์</label>
+                    <input id="regPhone" type="text" placeholder="เช่น 081-999-8888" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">อีเมล</label>
+                    <input id="regEmail" type="email" placeholder="lawyer@example.com" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">ชื่อสำนักงานทนายความ</label>
+                    <input id="regOfficeName" type="text" placeholder="เช่น สำนักงานกฎหมายสมชาย ยุติธรรม" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+            </div>
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-950">
+                🎁 <strong>สิทธิพิเศษสมาชิกใหม่:</strong> ทดลองเปิดสำนวนคดีและจัดทำคำฟ้อง/คำร้องตามแบบพิมพ์ศาลได้ฟรี <strong>๓ คดีแรก</strong> หากต้องการเพิ่มจำนวนคดีสามารถแจ้งสลิปโอนเงินรายเดือน รายปี หรือซื้อโควต้าเพิ่มได้ทันที
+            </div>
+            <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button onclick="App.closeRegisterLawyerModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-xs font-semibold">ยกเลิก</button>
+                <button onclick="App.submitRegisterLawyer()" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold">🚀 สมัครสมาชิก &amp; เริ่มทดลองใช้ ๓ คดี</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SHARED MODAL 4: PAYMENT SLIP NOTIFICATION (แจ้งยอดสลิปโอนเงิน) ==================== -->
+    <div id="paymentSlipModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+        <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div>
+                    <h3 class="font-bold text-base text-slate-900">💳 แจ้งยอดสลิปโอนเงิน (ต่ออายุรายเดือน / รายปี / ซื้อโควต้าคดีเพิ่ม)</h3>
+                    <p class="text-[11px] text-slate-500">เลือกแพ็กเกจและแนบภาพสลิปโอนเงินเพื่อให้แอดมินตรวจสอบและเพิ่มโควต้าคดี</p>
+                </div>
+                <button onclick="App.closePaymentSlipModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">บัญชีทนายความที่ขอเพิ่มโควต้า</label>
+                    <select id="slipUserSelect" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold"></select>
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">เลือกแพ็กเกจ (รายเดือน / รายปี / ซื้อโควต้าจำนวนคดี)</label>
+                    <select id="slipPlanSelect" onchange="App.onSelectPaymentPlan(this.value)" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold text-emerald-900 bg-emerald-50"></select>
+                </div>
+                <div id="slipBankInfoBox" class="sm:col-span-2 bg-slate-900 text-white p-3 rounded-xl text-xs"></div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ยอดโอนตามสลิป (บาท)</label>
+                    <input id="slipAmount" type="number" step="0.01" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold text-emerald-700" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">โควต้าคดีที่จะได้รับเพิ่ม (คดี)</label>
+                    <input id="slipQuotaCount" type="number" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">วันที่โอน</label>
+                    <input id="slipDate" type="text" value="14/11/2569" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">เวลาที่โอน</label>
+                    <input id="slipTime" type="text" value="18:10" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">ธนาคารที่โอนเข้า</label>
+                    <input id="slipBankName" type="text" value="ธนาคารกรุงไทย (พร้อมเพย์)" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">แนบรูปภาพสลิปโอนเงิน (หากไม่แนบ ระบบจะสร้างใบรับแจ้งสลิปอิเล็กทรอนิกส์ให้อัตโนมัติ)</label>
+                    <input id="slipFileInput" type="file" accept="image/*" onchange="App.onSelectSlipImageFile(this)" class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">หมายเหตุเพิ่มเติมถึงแอดมิน</label>
+                    <input id="slipRefNote" type="text" placeholder="เช่น โอนชำระค่าแพ็กเกจเพิ่มโควต้าคดีเรียบร้อยแล้ว" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button onclick="App.closePaymentSlipModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-xs font-semibold">ยกเลิก</button>
+                <button onclick="App.submitPaymentSlip()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">📤 ส่งแจ้งยอดสลิปโอนเงิน</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SHARED MODAL 5: ADMIN EDIT PLAN PRICING & QUOTA ==================== -->
+    <div id="editPlanModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+                <h3 class="font-bold text-base text-slate-900">🏷️ ตั้งค่าราคาแพ็กเกจและโควต้าจำนวนคดี (Admin)</h3>
+                <button onclick="App.closeEditPlanModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+            <input type="hidden" id="mdlPlanId" value="0" />
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">รหัสแพ็กเกจ</label>
+                    <input id="mdlPlanCode" type="text" placeholder="เช่น QUOTA-10" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ประเภทแพ็กเกจ</label>
+                    <select id="mdlPlanCategory" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold">
+                        <option value="Trial">ทดลองใช้ฟรี (Trial)</option>
+                        <option value="QuotaPack">ซื้อโควต้าจำนวนคดี (QuotaPack)</option>
+                        <option value="Monthly">สมาชิกรายเดือน (Monthly)</option>
+                        <option value="Yearly">สมาชิกรายปี (Yearly)</option>
+                    </select>
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">ชื่อแพ็กเกจ</label>
+                    <input id="mdlPlanName" type="text" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ราคา (บาท)</label>
+                    <input id="mdlPlanPrice" type="number" step="0.01" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold text-emerald-700" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">โควต้าจำนวนคดีที่ได้รับ (คดี)</label>
+                    <input id="mdlPlanQuota" type="number" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold" />
+                </div>
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ระยะเวลาใช้งาน (วัน)</label>
+                    <input id="mdlPlanDays" type="number" value="30" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">รายละเอียดสิทธิประโยชน์</label>
+                    <input id="mdlPlanDesc" type="text" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="font-semibold text-slate-700 block mb-1">ข้อมูลบัญชีธนาคาร / พร้อมเพย์รับโอน</label>
+                    <input id="mdlPlanBank" type="text" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button onclick="App.closeEditPlanModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-xs font-semibold">ยกเลิก</button>
+                <button onclick="App.savePlanConfig()" class="px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">💾 บันทึกราคาแพ็กเกจ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SHARED MODAL 6: MANAGE / ASSIGN CLERK TO LAWYER ACCOUNT (Many-to-Many) ==================== -->
+    <div id="manageClerkModal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+        <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div>
+                    <h3 class="font-bold text-base text-slate-900">👨‍💼 ตั้งเสมียนทนาย &amp; แอดแอคเคาท์เสมียนเข้าสังกัดทนายความ</h3>
+                    <p class="text-[11px] text-slate-500">เสมียนทนายเป็นส่วนหนึ่งของแอคเคาท์ทนาย และเสมียน ๑ คนสามารถทำงานให้ทนายได้มากกว่า ๑ คน</p>
+                </div>
+                <button onclick="App.closeManageClerkModal()" class="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">เลือกแอคเคาท์ทนายความผู้แต่งตั้งเสมียน *</label>
+                    <select id="clkLawyerUserSelect" class="w-full px-3 py-2 rounded-lg border border-slate-300 font-bold text-blue-950 bg-blue-50/50"></select>
+                </div>
+
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">รูปแบบการตั้งเสมียนทนาย</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" id="clkModeExistingBtn" onclick="App.setClerkModalMode('EXISTING')" class="py-2 px-3 rounded-xl font-bold border border-teal-500 bg-teal-600 text-white">
+                            🔗 เลือกเสมียนที่มีแอคเคาท์แล้ว (ใช้เสมียนร่วมกัน)
+                        </button>
+                        <button type="button" id="clkModeNewBtn" onclick="App.setClerkModalMode('NEW')" class="py-2 px-3 rounded-xl font-bold border border-slate-300 bg-slate-100 text-slate-700">
+                            ➕ สร้างแอคเคาท์เสมียนคนใหม่ให้ทนาย
+                        </button>
+                    </div>
+                </div>
+
+                <!-- โหมด 1: เลือกเสมียนทนายที่มีแอคเคาท์ในระบบอยู่แล้ว -->
+                <div id="clkExistingSection" class="p-3.5 rounded-xl bg-teal-50/70 border border-teal-200 space-y-2">
+                    <label class="font-semibold text-teal-950 block">เลือกแอคเคาท์เสมียนทนายในระบบ (เสมียน ๑ คนทำงานให้ทนายได้หลายคน)</label>
+                    <select id="clkExistingUserSelect" class="w-full px-3 py-2 rounded-lg border border-teal-300 bg-white font-bold text-slate-900"></select>
+                </div>
+
+                <!-- โหมด 2: สร้างแอคเคาท์เสมียนทนายคนใหม่พร้อมผูกเข้ากับทนาย -->
+                <div id="clkNewSection" class="hidden p-3.5 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="font-semibold text-slate-700 block mb-1">Username สำหรับเสมียนล็อกอิน *</label>
+                        <input id="clkNewUsername" type="text" placeholder="เช่น clerk_somsak" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 font-semibold bg-white" />
+                    </div>
+                    <div>
+                        <label class="font-semibold text-slate-700 block mb-1">รหัสผ่าน (Password)</label>
+                        <input id="clkNewPassword" type="password" value="123456" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white" />
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="font-semibold text-slate-700 block mb-1">ชื่อ-นามสกุลเสมียนทนาย (ใช้แสดงเป็นผู้พิมพ์/ผู้รับมอบฉันทะ) *</label>
+                        <input id="clkNewFullName" type="text" placeholder="เช่น นายสมศักดิ์ ภักดี" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 font-bold bg-white" />
+                    </div>
+                    <div>
+                        <label class="font-semibold text-slate-700 block mb-1">เลขบัตรประชาชน ๑๓ หลัก</label>
+                        <input id="clkNewCitizenId" type="text" placeholder="3-3301-00881-29-4" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white" />
+                    </div>
+                    <div>
+                        <label class="font-semibold text-slate-700 block mb-1">เบอร์โทรศัพท์</label>
+                        <input id="clkNewPhone" type="text" placeholder="088-7776775" class="w-full px-3 py-1.5 rounded-lg border border-slate-300 bg-white" />
+                    </div>
+                </div>
+
+                <div>
+                    <label class="font-semibold text-slate-700 block mb-1">ขอบเขตหน้าที่ที่ทนายความมอบหมาย</label>
+                    <input id="clkPermissions" type="text" value="พิมพ์คำคู่ความ, ยื่นคำร้อง/ปิดหมาย, รับมอบฉันทะ (แบบ ๑๐), จัดเก็บไฟล์สารบัญสำนวน" class="w-full px-3 py-2 rounded-lg border border-slate-300" />
+                </div>
+
+                <label class="inline-flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                    <input id="clkIsDefaultTypist" type="checkbox" checked class="rounded text-teal-600" />
+                    <span>ตั้งเป็นเสมียนทนายผู้พิมพ์หลักประจำแอคเคาท์ทนายความท่านนี้</span>
+                </label>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button onclick="App.closeManageClerkModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-xs font-semibold">ยกเลิก</button>
+                <button onclick="App.submitAssignClerk()" class="px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-xs font-bold">💾 บันทึกการตั้งเสมียนทนาย</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dedicated Root Print Container (100% Identical to Preview without Grid Width Constraints) -->
+    <div id="printOnlyRootContainer" class="print-only-root"></div>
+
+    <!-- Toast Notification -->
+    <div id="toastNotice" class="fixed bottom-6 right-6 z-50 hidden px-4 py-3 rounded-xl bg-slate-900 text-white text-xs font-semibold shadow-xl border border-amber-400/40 no-print"></div>
+
+    <script src="/js/court-renderer.js?v=9"></script>
+    <script src="/js/app.js?v=9"></script>
+</body>
+</html>
+

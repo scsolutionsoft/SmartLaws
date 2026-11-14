@@ -1,0 +1,632 @@
+/* ==========================================================================
+   SmartLaws - ระบบบริหารจัดการคดีความ แบบพิมพ์ศาล และลายเซ็นอิเล็กทรอนิกส์
+   Design System & Exact Thai Court Form Print Engine (A4 / Garuda / 40 ก.)
+   ========================================================================== */
+
+:root {
+    --navy-950: #0a1128;
+    --navy-900: #0f172a;
+    --navy-800: #1e293b;
+    --navy-700: #334155;
+    --gold-500: #d4af37;
+    --gold-600: #b8860b;
+    --gold-100: #fef9c3;
+    --bg-main: #f1f5f9;
+    --card-bg: #ffffff;
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --border-color: #e2e8f0;
+    --plaintiff-color: #1d4ed8;
+    --plaintiff-bg: #eff6ff;
+    --defendant-color: #0f766e;
+    --defendant-bg: #f0fdfa;
+    --criminal-color: #b91c1c;
+    --criminal-bg: #fef2f2;
+    --civil-color: #4338ca;
+    --civil-bg: #eef2ff;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: 'Sarabun', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+}
+::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+}
+
+/* App Layout */
+.app-shell {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 280px;
+    background: linear-gradient(180deg, #0b132b 0%, #1c2541 100%);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.18);
+    transition: transform 0.25s ease;
+}
+
+.main-area {
+    flex: 1;
+    margin-left: 280px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding-bottom: 80px;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    margin: 4px 12px;
+    border-radius: 10px;
+    color: #cbd5e1;
+    font-weight: 500;
+    font-size: 0.96rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+.nav-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+}
+
+.nav-item.active {
+    background: linear-gradient(135deg, rgba(212, 175, 55, 0.22) 0%, rgba(212, 175, 55, 0.08) 100%);
+    color: #fde047;
+    border-color: rgba(212, 175, 55, 0.45);
+    font-weight: 600;
+}
+
+/* Role Switcher Pill */
+.role-pill-active-plaintiff {
+    background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(29, 78, 216, 0.3);
+}
+
+.role-pill-active-defendant {
+    background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(15, 118, 110, 0.3);
+}
+
+/* ==========================================================================
+   THAI COURT PAPER PREVIEW & PRINT ENGINE (แบบพิมพ์ศาล A4 มาตรฐาน)
+   ========================================================================== */
+
+.court-paper-wrapper {
+    background: #475569;
+    padding: 28px 16px;
+    border-radius: 14px;
+    overflow-x: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    box-shadow: inset 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.court-page {
+    width: 210mm;
+    min-height: 297mm;
+    background: #ffffff;
+    color: #000000;
+    padding: 15mm 16mm 16mm 22mm; /* ขอบซ้าย 2.2 ซม. สำหรับเจาะรูเข้าสำนวนศาล */
+    position: relative;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    font-family: 'Sarabun', 'TH SarabunPSK', sans-serif;
+    font-size: 14pt;
+    line-height: 1.5;
+    box-sizing: border-box;
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.court-page-top {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.court-page-bottom-note {
+    flex-shrink: 0;
+    margin-top: 8px;
+    border-top: 1.8px solid #000000;
+    padding-top: 6px;
+    font-size: 13pt;
+    background: #ffffff;
+}
+
+/* วงกลมเจาะรูมุมบนซ้าย + รหัสแบบพิมพ์ศาล เช่น (๔), (๗), (๑๑ ก.) */
+.court-punch-hole {
+    position: absolute;
+    top: 15mm;
+    left: 16mm;
+    width: 6.5mm;
+    height: 6.5mm;
+    border: 1.4px solid #000;
+    border-radius: 50%;
+}
+
+.court-form-code-box {
+    position: absolute;
+    top: 13.5mm;
+    left: 27mm;
+    max-width: 58mm;
+    font-weight: 700;
+    font-size: 14pt;
+    line-height: 1.25;
+}
+
+/* ตราครุฑมาตรฐานศาลยุติธรรม (ตรงกลางบน) */
+.court-garuda-center {
+    text-align: center;
+    margin-top: -3mm;
+    margin-bottom: 4mm;
+}
+
+.court-garuda-img {
+    width: 26mm;
+    height: 26mm;
+    object-fit: contain;
+    display: inline-block;
+}
+
+/* กล่องเลขคดีดำ-แดง มุมบนขวา (ห้ามตกบรรทัดเด็ดขาด) */
+.court-case-number-box {
+    position: absolute;
+    top: 20mm;
+    right: 14mm;
+    width: auto;
+    min-width: 72mm;
+    font-size: 13.5pt;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.court-case-number-line {
+    white-space: nowrap;
+    display: block;
+}
+
+/* ย่อหน้า "ขอศาลได้โปรดอนุญาต" ย่อหน้าสุดท้ายก่อน ควรมิควรแล้วแต่จะโปรด (มีเส้นประบรรทัดด้านล่างและไม่ทับเส้นประ) */
+.court-closing-permission {
+    height: 31px !important;
+    line-height: 25px !important;
+    padding-top: 1px !important;
+    padding-left: 2.5rem;
+    text-align: left !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    border-bottom: 1.2px dotted #334155 !important;
+    box-sizing: border-box;
+}
+
+/* "ควรมิควรแล้วแต่จะโปรด" กึ่งกลางกระดาษ แล้วเคาะไปทางขวาอีก 6 เคาะ (มีเส้นประบรรทัดด้านล่าง) */
+.court-closing-prayer {
+    height: 31px !important;
+    line-height: 25px !important;
+    padding-top: 1px !important;
+    text-align: center !important;
+    padding-left: 6ch !important;
+    font-weight: 600;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    white-space: nowrap;
+    box-sizing: border-box;
+}
+
+.court-lined-body .court-closing-prayer {
+    border-bottom: 1.2px dotted #334155 !important;
+}
+
+/* การลงชื่อให้อยู่กึ่งกลางบรรทัด และแต่ละรายการลงชื่อต้องอยู่คนละบรรทัด (ล็อกกริด 31px ไม่ให้ทับเส้นประ) */
+.court-signature-row {
+    width: 100%;
+    text-align: center !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding: 0 !important;
+    display: block;
+    clear: both;
+}
+
+.court-signature-line {
+    height: 31px !important;
+    line-height: 25px !important;
+    padding-top: 1px !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    text-align: center !important;
+    white-space: nowrap;
+    position: relative;
+    box-sizing: border-box;
+}
+
+.court-lined-body .court-signature-line {
+    border-bottom: 1.2px dotted #334155 !important;
+}
+
+/* บรรทัดลงชื่อชิดขวาใต้หมายเหตุท้ายหน้าแรก ตามภาพที่ 4 และภาพที่ 5 */
+.court-note-right-sig {
+    width: 100%;
+    text-align: right !important;
+    white-space: nowrap;
+    position: relative;
+    margin-top: 10px;
+    margin-bottom: 2px;
+    line-height: 1.35;
+}
+
+.court-dotted-line {
+    border-bottom: 1.2px dotted #1e293b !important;
+    display: inline-block;
+    padding: 0 6px 2px 6px;
+    min-width: 30px;
+    text-align: center;
+    font-weight: 500;
+    color: #000;
+    line-height: 1.2;
+    vertical-align: baseline;
+}
+
+/* เมื่ออยู่ใน .court-lined-body ซึ่งแต่ละบรรทัดมีเส้นประ border-bottom อยู่แล้ว ให้ซ่อนเส้นประซ้ำของ .court-dotted-line เพื่อไม่ให้เกิดเส้นประซ้อนทับตัวอักษร */
+.court-lined-body .court-dotted-line {
+    border-bottom: none !important;
+    padding-bottom: 0 !important;
+    line-height: 25px !important;
+    vertical-align: baseline;
+}
+
+.court-dotted-block {
+    border-bottom: 1.2px dotted #334155 !important;
+    padding-bottom: 1px;
+}
+
+/* กรอบปีกกา ระหว่าง โจทก์ - จำเลย */
+.court-parties-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 12px 0;
+}
+
+.court-brace-cell {
+    width: 28px;
+    font-size: 46pt;
+    font-weight: 200;
+    line-height: 0.85;
+    text-align: center;
+    vertical-align: middle;
+    font-family: 'Times New Roman', serif;
+}
+
+/* ตารางบัญชีพยาน (๑๕) */
+.court-witness-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1.5px solid #000;
+    margin-top: 10px;
+    font-size: 13.5pt;
+}
+
+.court-witness-table th {
+    border: 1.2px solid #000;
+    padding: 6px 8px;
+    text-align: center;
+    font-weight: 700;
+    background: #fafafa;
+}
+
+.court-witness-table td {
+    border-left: 1.2px solid #000;
+    border-right: 1.2px solid #000;
+    border-bottom: 1px dashed #333;
+    padding: 6px 8px;
+    vertical-align: top;
+}
+
+/* ช่องเลขบัตรประชาชน 13 หลักตามแบบฟอร์มศาล (ปรับขนาดกระชับพอดีบรรทัดเดียวกับชื่อและเชื้อชาติ ไม่ให้ฉีกตกบรรทัด) */
+.citizen-id-boxes {
+    display: inline-flex;
+    align-items: center;
+    gap: 1.5px;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.citizen-digit-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15.5px;
+    height: 20px;
+    border: 1px solid #000;
+    font-size: 11.5pt;
+    font-weight: 600;
+    line-height: 1;
+}
+
+/* แถวข้อมูลส่วนหัวคำคู่ความ (ทุนทรัพย์, ชื่อคู่ความ, เลขประชาชน 13 หลัก, ที่อยู่, โทรศัพท์)
+   บังคับจัดให้อยู่ในบรรทัดเดียวตามแบบพิมพ์ศาล ห้ามฉีกคำตกบรรทัดเด็ดขาด */
+.court-preamble-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: nowrap !important;
+    white-space: nowrap !important;
+    width: 100%;
+    gap: 3px;
+    font-size: 13.4pt;
+    line-height: 1.42;
+    margin: 1px 0;
+    box-sizing: border-box;
+}
+
+.court-preamble-row.indent {
+    padding-left: 2.2rem;
+}
+
+.court-preamble-row > span:not(.court-dotted-line):not(.citizen-id-boxes) {
+    flex-shrink: 0;
+}
+
+.court-preamble-row .court-dotted-line {
+    flex: 1 1 20px;
+    min-width: 18px !important;
+    padding: 0 3px 1px 3px;
+    white-space: nowrap !important;
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+/* กรณีข้อความในแถวข้อมูลคู่ความยาวเป็นพิเศษ ให้ย่อขนาดอักษรและลดช่องไฟอัตโนมัติเพื่อไม่ให้ฉีกตกบรรทัด */
+.court-preamble-row.compact {
+    font-size: 12.6pt;
+    gap: 2px;
+    letter-spacing: -0.1px;
+}
+
+/* กลุ่มตัวเลขจำนวนเงิน วันเดือนปี และคำเฉพาะที่ห้ามฉีกแยกบรรทัดเด็ดขาด */
+.court-nowrap-token {
+    white-space: nowrap !important;
+    display: inline;
+}
+
+/* บรรทัดเส้นประแบบพิมพ์ศาล (ใช้ border-bottom จริงใต้ตัวอักษรทุกบรรทัด เพื่อให้พิมพ์ออกเป็นเอกสาร PDF มีเส้นประครบทุกบรรทัด ๑๐๐%) */
+.court-lined-body {
+    line-height: 25px;
+    font-size: 13.6pt;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+    word-spacing: normal !important;
+    letter-spacing: 0 !important;
+    width: 100%;
+}
+
+.court-lined-body > div {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+    word-spacing: normal !important;
+    letter-spacing: 0 !important;
+}
+
+/* บรรทัดคำคู่ความแต่ละบรรทัดที่ตัดคำตามระบบภาษาไทย มีเส้นประบรรทัดด้านล่างเสมอทั้งหน้าพรีวิวและตอนพิมพ์เป็น PDF */
+.court-thai-line {
+    height: 31px !important;
+    line-height: 25px !important;
+    padding-top: 1px !important;
+    padding-right: 2px !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    white-space: nowrap;
+    text-align: left !important;
+    word-spacing: normal !important;
+    letter-spacing: 0 !important;
+    border-bottom: 1.2px dotted #334155 !important;
+    box-sizing: border-box;
+    width: 100%;
+    overflow: visible;
+}
+
+/* ย่อหน้าคำคู่ความตามระบบการเคาะวรรคและการตัดคำภาษาไทย (ไม่ถ่างช่องว่างระหว่างคำแบบภาษาอังกฤษ) */
+.court-thai-paragraph {
+    text-indent: 2.5rem;
+    text-align: left !important;
+    word-spacing: normal !important;
+    letter-spacing: 0 !important;
+    line-break: strict;
+    word-break: normal;
+    overflow-wrap: break-word;
+    white-space: normal;
+}
+
+.court-thai-clause-continuation {
+    text-indent: 0;
+    text-align: left !important;
+    word-spacing: normal !important;
+    letter-spacing: 0 !important;
+    line-break: strict;
+    word-break: normal;
+    overflow-wrap: break-word;
+    white-space: normal;
+}
+
+/* Signature Image inside Court Paper */
+.court-sig-img {
+    max-height: 46px;
+    max-width: 170px;
+    object-fit: contain;
+    display: block;
+    margin: -8px auto -6px auto;
+}
+
+/* Dedicated Print Mount Area (ซ่อนในโหมดหน้าจอปกติ แสดงเฉพาะตอนสั่งพิมพ์ PDF เหมือนหน้าพรีวิว 100%) */
+.print-only-root {
+    display: none;
+}
+
+/* Mobile Bottom Nav */
+.mobile-bottom-nav {
+    display: none;
+}
+
+@media (max-width: 1024px) {
+    .sidebar {
+        transform: translateX(-100%);
+    }
+    .sidebar.open {
+        transform: translateX(0);
+    }
+    .main-area {
+        margin-left: 0;
+    }
+    .mobile-bottom-nav {
+        display: flex;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #0f172a;
+        border-top: 1px solid #334155;
+        z-index: 45;
+        justify-content: space-around;
+        padding: 8px 4px;
+    }
+    .court-page {
+        transform: scale(0.85);
+        transform-origin: top center;
+    }
+}
+
+/* ==========================================================================
+   PRINT MEDIA RULES (สั่งพิมพ์ออกเป็นไฟล์ PDF เหมือนการแสดงตัวอย่างในหน้าก่อนพิมพ์ 100%)
+   ========================================================================== */
+@media print {
+    @page {
+        size: A4 portrait;
+        margin: 0mm;
+    }
+
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    html,
+    body {
+        width: 210mm !important;
+        background: #ffffff !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    /* เมื่อสั่งพิมพ์แบบพิมพ์ศาล ให้ซ่อนโครงสร้างแอปพลิเคชันทั้งหมดและพิมพ์จาก #printOnlyRootContainer โดยตรงเพื่อไม่ให้ติด Grid xl:col-span-7 หรือตกขอบขวา */
+    body.printing-court-paper .app-shell,
+    body.printing-court-paper #filePreviewModal,
+    body.printing-court-paper #uploadFileModal,
+    body.printing-court-paper #registerLawyerModal,
+    body.printing-court-paper #paymentSlipModal,
+    body.printing-court-paper #editPlanModal,
+    body.printing-court-paper #manageClerkModal,
+    body.printing-court-paper #caseModal,
+    body.printing-court-paper #toast {
+        display: none !important;
+    }
+
+    body.printing-court-paper .print-only-root {
+        display: block !important;
+        width: 210mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+    }
+
+    .no-print,
+    .sidebar,
+    .topbar,
+    .mobile-bottom-nav,
+    .editor-panel {
+        display: none !important;
+    }
+
+    .main-area {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+
+    .court-paper-wrapper {
+        background: transparent !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        display: block !important;
+        width: 210mm !important;
+        overflow: visible !important;
+    }
+
+    .court-page {
+        width: 210mm !important;
+        height: 297mm !important;
+        min-height: 297mm !important;
+        max-height: 297mm !important;
+        padding: 14mm 15mm 14mm 22mm !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        overflow: hidden !important;
+        page-break-after: always !important;
+        break-after: page !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        transform: none !important;
+    }
+
+    .court-page:last-child {
+        page-break-after: auto !important;
+        break-after: auto !important;
+    }
+
+    .court-thai-line,
+    .court-closing-permission,
+    .court-lined-body .court-closing-prayer,
+    .court-lined-body .court-signature-line {
+        border-bottom: 1.2px dotted #334155 !important;
+    }
+}
+
