@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SmartLaws.Web.Models;
 
 public class LawCase
@@ -13,6 +15,9 @@ public class LawCase
     public string SubCategory { get; set; } = string.Empty; // อาญาสามัญ, แพ่งสามัญ, มโนสาเร่, ผบ., ขจัดการมรดก
     public string LawyerRole { get; set; } = "ทนายโจทก์"; // ทนายโจทก์, ทนายจำเลย, ทนายผู้ร้อง, ทนายผู้คัดค้าน
     public string RepresentingPartyOrder { get; set; } = string.Empty; // เช่น จำเลยที่ ๒, โจทก์
+    public string PartyCountsJson { get; set; } = "{}";
+    public int PartyVersion { get; set; }
+    public List<CaseParty>? InitialParties { get; set; }
     public string PlaintiffName { get; set; } = string.Empty;
     public string DefendantName { get; set; } = string.Empty;
     public string ChargeOrCauseOfAction { get; set; } = string.Empty; // ข้อหาหรือฐานความผิด
@@ -232,6 +237,10 @@ public class PaymentSlip
     public string TransferTimeText { get; set; } = string.Empty;
     public string BankName { get; set; } = "ธนาคารกรุงไทย";
     public string SlipImageBase64 { get; set; } = string.Empty;
+    public string? SlipImageUrl { get; set; }
+    [JsonIgnore]
+    public string? SlipStorageKey { get; set; }
+    public string? SlipMimeType { get; set; }
     public string ReferenceNote { get; set; } = string.Empty;
     public string Status { get; set; } = "รอตรวจสอบ"; // รอตรวจสอบ, อนุมัติแล้ว, ปฏิเสธ
     public string AdminRemark { get; set; } = string.Empty;
@@ -260,6 +269,8 @@ public class CaseFileAttachment
     public string FileStatus { get; set; } = "ยื่นต่อศาลแล้ว"; // ร่าง, ตรวจทานแล้ว, ลงนามแล้ว, ยื่นต่อศาลแล้ว, ศาลรับคำคู่ความแล้ว
     public string FileUrlOrPath { get; set; } = string.Empty; // URL ภายนอก หรือ /api/files/stream-sample/...
     public string FileDataBase64 { get; set; } = string.Empty; // Base64 ของ PDF หรือรูปภาพที่จัดเก็บ
+    [JsonIgnore]
+    public string? StorageKey { get; set; }
     public string MimeType { get; set; } = "application/pdf";
     public int PageCount { get; set; } = 1;
     public string UploadedBy { get; set; } = string.Empty;

@@ -23,6 +23,7 @@
         async init() {
             try {
                 A.state.currentUser = await api('/api/auth/me');
+                if(A.state.currentUser.role==='Client'){location.replace('/client.html');return;}
                 const theme = localStorage.getItem(`sl-theme-${A.state.currentUser.id}`) || 'classic';
                 this.setTheme(theme, false);
                 await A.loadDashboardData();

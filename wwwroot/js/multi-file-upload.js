@@ -39,7 +39,6 @@
         }
         input.value='';this.renderUploadBatch();
     };
-    const read = file => new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('อ่านไฟล์ไม่สำเร็จ'));reader.readAsDataURL(file);});
     A.submitUploadFileAttachment = async function() {
         if(this.uploadBatchBusy)return;
         const progress=document.getElementById('uploadBatchProgress'), modal=document.getElementById('uploadFileModal');
@@ -64,11 +63,13 @@
                     const file=entry.file;
                     if(!entry.title.trim())throw Error('กรุณาระบุชื่อคำร้อง / เอกสาร');
                     if(!Number.isInteger(entry.pages)||entry.pages<1)throw Error('จำนวนแผ่นต้องเป็นจำนวนเต็มตั้งแต่ 1');
-                    if(!file.size||file.size>10*1024*1024)throw Error('ไฟล์ต้องมีขนาดมากกว่า 0 และไม่เกิน 10 MB');
+                    if(!file.size||file.size>1024*1024*1024)throw Error('ไฟล์ต้องมีขนาดมากกว่า 0 และไม่เกิน 1 GB');
                     const mime=/\.pdf$/i.test(file.name)?'application/pdf':/\.png$/i.test(file.name)?'image/png':/\.jpe?g$/i.test(file.name)?'image/jpeg':null;
                     if(!mime)throw Error('รองรับเฉพาะ PDF, PNG และ JPG');
-                    const data=await read(file);
-                    const response=await fetch('/api/files',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...this.uploadBatchTarget,fileTitle:entry.title.trim(),pageCount:entry.pages,storageType:mime==='application/pdf'?'PDF':'IMAGE',mimeType:mime,fileDataBase64:data})});
+                    const payload=new FormData();
+                    for(const [key,value] of Object.entries({...this.uploadBatchTarget,fileTitle:entry.title.trim(),pageCount:entry.pages,storageType:mime==='application/pdf'?'PDF':'IMAGE',mimeType:mime}))payload.append(key,String(value??''));
+                    payload.append('file',file,file.name);
+                    const response=await fetch('/api/files',{method:'POST',body:payload});
                     const result=await response.json().catch(()=>({}));
                     if(!response.ok)throw Error(result.message||`บันทึกไม่สำเร็จ (${response.status}) กรุณาลองใหม่`);
                     entry.status='saved';entry.id=result.id;

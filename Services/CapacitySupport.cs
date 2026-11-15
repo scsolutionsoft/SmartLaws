@@ -6,6 +6,11 @@ namespace SmartLaws.Web.Services;
 
 public static class CapacitySupport
 {
+    sealed class FileContentLocation
+    {
+        public string MimeType { get; set; } = "";
+        public string? StorageKey { get; set; }
+    }
     // Apply access scope in SQL before materializing rows, not only in the response filter.
     public const string CaseScope = """
         SELECT c.Id FROM SL_LawCases c WHERE
@@ -17,7 +22,7 @@ public static class CapacitySupport
     public const string FileColumns = """
         f.Id,f.CaseId,f.DocumentId,f.DirectoryIndexNo,f.FormCode,f.DirectoryCategoryName,
         f.FileTitle,f.StorageType,f.FileStatus,
-        CASE WHEN DATALENGTH(f.FileDataBase64)>0 THEN CONCAT('/api/files/',f.Id,'/content') ELSE f.FileUrlOrPath END AS FileUrlOrPath,
+        CASE WHEN f.StorageKey IS NOT NULL OR DATALENGTH(f.FileDataBase64)>0 THEN CONCAT('/api/files/',f.Id,'/content') ELSE f.FileUrlOrPath END AS FileUrlOrPath,
         f.MimeType,f.PageCount,f.UploadedBy,f.Remark,f.CreatedAt,
         f.CourtLevel,f.JudgmentBlackCaseNo,f.JudgmentRedCaseNo,f.JudgmentDate
         """;
@@ -57,7 +62,8 @@ public static class CapacitySupport
             SELECT * FROM SL_UserAccounts WHERE @Role='Admin' OR Id=@Id OR
               Id IN (SELECT LawyerUserId FROM #Mappings) OR Id IN (SELECT ClerkUserId FROM #Mappings) ORDER BY Id;
             SELECT * FROM SL_SubscriptionPlans ORDER BY Id;
-            SELECT * FROM SL_PaymentSlips WHERE @Role='Admin' OR UserId=@Id ORDER BY Id DESC;
+            SELECT *,CASE WHEN SlipStorageKey IS NOT NULL THEN CONCAT('/api/payments/slips/',Id,'/content') ELSE SlipImageBase64 END SlipImageUrl
+              FROM SL_PaymentSlips WHERE @Role='Admin' OR UserId=@Id ORDER BY Id DESC;
             SELECT {FileColumns} FROM SL_CaseFileAttachments f WHERE f.CaseId IN (SELECT Id FROM #VisibleCases) ORDER BY f.DirectoryIndexNo,f.Id DESC;
             SELECT * FROM #Mappings ORDER BY LawyerUserId,IsDefaultTypist DESC,Id;
             DROP TABLE #Mappings; DROP TABLE #VisibleCases;
@@ -81,12 +87,17 @@ public static class CapacitySupport
 
     public static void MapFiles(RouteGroupBuilder api)
     {
-        api.MapGet("/files/{id:int}/content", async (int id, HttpContext http, DatabaseService db) =>
+        api.MapGet("/files/{id:int}/content", async (int id, HttpContext http, DatabaseService db, FileStorage storage) =>
         {
             using var conn = db.CreateConnection();
-            var type = await conn.ExecuteScalarAsync<string>(new CommandDefinition(
-                "SELECT MimeType FROM SL_CaseFileAttachments WHERE Id=@id AND DATALENGTH(FileDataBase64)>0", new {id}, cancellationToken:http.RequestAborted));
-            if (type is not ("application/pdf" or "image/png" or "image/jpeg")) return Results.NotFound();
+            var file = await conn.QuerySingleOrDefaultAsync<FileContentLocation>(new CommandDefinition(
+                "SELECT MimeType,StorageKey FROM SL_CaseFileAttachments WHERE Id=@id AND (StorageKey IS NOT NULL OR DATALENGTH(FileDataBase64)>0)", new {id}, cancellationToken:http.RequestAborted));
+            if (file is null || file.MimeType is not ("application/pdf" or "image/png" or "image/jpeg")) return Results.NotFound();
+            if(file.StorageKey is not null)
+            {
+                try{return Results.File(storage.OpenRead(file.StorageKey),file.MimeType,enableRangeProcessing:true);}
+                catch(FileNotFoundException){return Results.NotFound();}
+            }
             // The access filter authorizes the file's case before this result is executed.
             return Results.Stream(async output => {
                 await using var connection = db.CreateConnection();
@@ -97,7 +108,7 @@ public static class CapacitySupport
                 await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, http.RequestAborted);
                 if (await reader.ReadAsync(http.RequestAborted))
                     await DecodeBase64Async(reader.GetTextReader(0),output,http.RequestAborted);
-            }, contentType:type);
+            }, contentType:file.MimeType);
         });
     }
 

@@ -323,6 +323,30 @@ body {
     padding-bottom: 1px;
 }
 
+.court-form9-page .court-dotted-line,
+.court-form9-page .court-dotted-block,
+.court-form9-page .court-signature-row .court-signature-line + .court-signature-line {
+    font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', sans-serif;
+    font-size: 16pt !important;
+}
+
+.court-form9-page .court-signature-name {
+    width: 100%;
+    text-align: center !important;
+}
+
+.clause-content-editor { line-height: 1.35; }
+.clause-style-toolbar { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:10px; border:1px solid #e2e8f0; border-radius:9px; background:#f8fafc; }
+.clause-style-label { display:grid; gap:4px; color:#475569; font-size:11px; font-weight:600; }
+.clause-style-select { width:100%; min-width:0; padding:5px 7px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#0f172a; font-size:12px; }
+
+.court-form9-page .citizen-digit-box {
+    width: 19px;
+    height: 26px;
+    font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', sans-serif;
+    font-size: 16pt;
+}
+
 /* กรอบปีกกา ระหว่าง โจทก์ - จำเลย */
 .court-parties-table {
     width: 100%;
@@ -469,8 +493,8 @@ body {
     font-size: 13.6pt;
     padding-top: 0 !important;
     margin-top: 0 !important;
-    word-spacing: normal !important;
-    letter-spacing: 0 !important;
+    word-spacing: normal;
+    letter-spacing: 0;
     width: 100%;
 }
 
@@ -478,26 +502,33 @@ body {
     margin-top: 0 !important;
     margin-bottom: 0 !important;
     padding-bottom: 0 !important;
-    word-spacing: normal !important;
-    letter-spacing: 0 !important;
+    word-spacing: normal;
+    letter-spacing: 0;
 }
 
 /* บรรทัดคำคู่ความแต่ละบรรทัดที่ตัดคำตามระบบภาษาไทย มีเส้นประบรรทัดด้านล่างเสมอทั้งหน้าพรีวิวและตอนพิมพ์เป็น PDF */
 .court-thai-line {
     height: 31px !important;
-    line-height: 25px !important;
-    padding-top: 1px !important;
+    line-height: 25px;
+    padding-top: 1px;
     padding-right: 2px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
     white-space: nowrap;
     text-align: left !important;
-    word-spacing: normal !important;
-    letter-spacing: 0 !important;
+    word-spacing: normal;
+    letter-spacing: 0;
     border-bottom: 1.2px dotted #334155 !important;
     box-sizing: border-box;
     width: 100%;
     overflow: visible;
+}
+
+/* The document-level text controls apply to every entered value on every court form. */
+.court-page .court-dotted-line,
+.court-page .court-thai-line {
+    font-family: var(--court-entry-font-family, 'Sarabun', sans-serif) !important;
+    font-size: var(--court-entry-font-size, 14pt) !important;
 }
 
 /* ย่อหน้าคำคู่ความตามระบบการเคาะวรรคและการตัดคำภาษาไทย (ไม่ถ่างช่องว่างระหว่างคำแบบภาษาอังกฤษ) */

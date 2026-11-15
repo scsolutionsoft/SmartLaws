@@ -17,11 +17,13 @@ using var db=new SqlConnection(settings["ConnectionStrings"]!["DefaultConnection
 await db.OpenAsync();
 const int accounts=800, active=200, rounds=10;
 var prefix="capacity"+Guid.NewGuid().ToString("N")[..12];
+var testBaseUrl=Environment.GetEnvironmentVariable("SMARTLAWS_TEST_BASE_URL")??"http://localhost:5088";
 var password=Guid.NewGuid().ToString("N");
 var hash=AccountSecurity.Hash(password);
 var payload=RandomNumberGenerator.GetBytes(64*1024); Encoding.ASCII.GetBytes("%PDF-1.4\n").CopyTo(payload,0);
 var base64=Convert.ToBase64String(payload);
 var samples=new ConcurrentBag<Sample>();
+var uploadedFiles=new ConcurrentBag<(int ClientIndex,int FileId)>();
 var clients=new List<HttpClient>();
 var failures=new ConcurrentBag<string>();
 var suite=Stopwatch.StartNew();
@@ -74,7 +76,7 @@ try {
         """,new{active,pattern=prefix+"%"})).ToList();
     Check(records.Count==active,"200 active fixtures");
     Check(await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_UserAccounts WHERE Username LIKE @pattern",new{pattern=prefix+"%"})==accounts,"800 accounts seeded");
-    foreach(var record in records)clients.Add(new(new HttpClientHandler{CookieContainer=new CookieContainer()}){BaseAddress=new Uri("http://localhost:5088"),Timeout=TimeSpan.FromSeconds(90)});
+    foreach(var record in records)clients.Add(new(new HttpClientHandler{CookieContainer=new CookieContainer()}){BaseAddress=new Uri(testBaseUrl),Timeout=TimeSpan.FromSeconds(90)});
     Console.WriteLine("Seeded 800 accounts/cases/documents and 200 synthetic 64 KiB PDF files. Logging in 200 distinct accounts from one IP.");
     await Task.WhenAll(records.Select(async (record,index)=>{
         try {await Request(clients[index],"login","/api/auth/login",new{username=record.Username,password});}
@@ -82,7 +84,7 @@ try {
     }));
     Check(failures.IsEmpty,"Login failures: "+string.Join(",",failures.Take(5)));
     using(var foreign=await clients[0].GetAsync($"/api/files/{records[1].FileId}/content")) Check(foreign.StatusCode==HttpStatusCode.NotFound,"Cross-account PDF denied");
-    using(var anonymous=new HttpClient()) Check((await anonymous.GetAsync($"http://localhost:5088/api/files/{records[0].FileId}/content")).StatusCode==HttpStatusCode.Unauthorized,"Anonymous PDF denied");
+    using(var anonymous=new HttpClient()) Check((await anonymous.GetAsync($"{testBaseUrl}/api/files/{records[0].FileId}/content")).StatusCode==HttpStatusCode.Unauthorized,"Anonymous PDF denied");
     var workload=Stopwatch.StartNew();
     for(int round=0;round<rounds;round++) {
         await Task.WhenAll(records.Select(async (record,index)=>{
@@ -101,6 +103,7 @@ try {
                 if(round==0) {
                     var uploaded=JsonNode.Parse(await Request(client,"upload","/api/files",new{caseId=record.CaseId,fileTitle=prefix,storageType="PDF",fileDataBase64="data:application/pdf;base64,"+base64,mimeType="application/pdf",pageCount=1}))!;
                     Check(string.IsNullOrEmpty(uploaded["fileDataBase64"]?.GetValue<string>()),"Upload response excludes PDF bytes");
+                    uploadedFiles.Add((index,uploaded["id"]!.GetValue<int>()));
                     var copy=await Request(client,"download",uploaded["fileUrlOrPath"]!.GetValue<string>());
                     Check(copy.SequenceEqual(payload),"Uploaded PDF roundtrip");
                 }
@@ -122,6 +125,11 @@ try {
     Console.WriteLine(JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}));
     Check(failures.IsEmpty,"Load run failed; inspect artifacts/capacity-800-200.json");
 }finally {
+    foreach(var upload in uploadedFiles)
+    {
+        using var deleted=await clients[upload.ClientIndex].DeleteAsync($"/api/files/{upload.FileId}");
+        Check(deleted.IsSuccessStatusCode,$"Could not remove uploaded test file {upload.FileId}");
+    }
     foreach(var client in clients)client.Dispose();
     await db.ExecuteAsync("""
         DELETE FROM SL_CaseFileAttachments WHERE CaseId IN (SELECT Id FROM SL_LawCases WHERE CaseCode LIKE @pattern);

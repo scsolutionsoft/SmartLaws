@@ -34,10 +34,23 @@
             drafts.set(`${current.caseId}:${current.formCode}`, structuredClone(current));
             const key = `${current.caseId}:${code}`, tpl = A.state.templates.find(t => t.formCode === code);
             const extra = parse(current.extraFieldsJson);
+            const currentCase = A.state.cases.find(c => Number(c.id) === Number(current.caseId)) || {};
+            const caseLawyer = A.state.lawyers.find(l => Number(l.id) === Number(currentCase.primaryLawyerId));
+            const nextExtra = {
+                CaseFields:extra.CaseFields || {},
+                BlackCaseNo:extra.BlackCaseNo,
+                BlackCaseYear:extra.BlackCaseYear,
+                RedCaseNo:extra.RedCaseNo,
+                RedCaseYear:extra.RedCaseYear,
+                TextFontFamily:extra.TextFontFamily,
+                TextFontSize:extra.TextFontSize,
+                ShowPermission:false
+            };
+            if (number(code) === 9) nextExtra.Form9Lawyer = A.toForm9LawyerProfile(caseLawyer) || {};
             const next = drafts.get(key) || {...current, id:0, templateId:tpl?.id || null, formCode:code,
                 documentTitle:names[number(code)] || tpl?.defaultHeaderTitle || tpl?.formName || code,
                 closingPrayer: number(code) === 4 ? 'ควรมิควรแล้วแต่จะโปรด' : current.closingPrayer,
-                clausesJson:'[]', extraFieldsJson:JSON.stringify({CaseFields:extra.CaseFields || {}, BlackCaseNo:extra.BlackCaseNo, BlackCaseYear:extra.BlackCaseYear, RedCaseNo:extra.RedCaseNo, RedCaseYear:extra.RedCaseYear, ShowPermission:false}), status:'ร่าง'};
+                clausesJson:'[]', extraFieldsJson:JSON.stringify(nextExtra), status:'ร่าง'};
             A.loadDocumentIntoEditorState(structuredClone(next));
             A.showToast('เปลี่ยนช่องกรอกตามแบบพิมพ์แล้ว · ร่างเดิมยังอยู่เมื่อสลับกลับในหน้านี้');
         },
@@ -65,10 +78,14 @@
             }
             const fields = n === 3 ? [] : [...shared];
             if ([1,2,14].includes(n)) fields.push(['chargeOrCauseOfAction','เรื่อง'],['claimAmount','ทุนทรัพย์ (บาท)']);
-            box.innerHTML = `<div class="text-sm font-bold">${esc(doc.formCode)} ${esc(names[n] || doc.documentTitle)}</div><p class="text-xs">ช่องด้านล่างตรงกับข้อมูลบนแบบพิมพ์ด้านขวา การแก้ไขมีผลเฉพาะเอกสารนี้</p><div class="grid grid-cols-2 gap-2">${fields.map(([key,label]) => E.input(key,label,extra.CaseFields?.[key] ?? lawCase[key],true)).join('')}${(special[n] || []).map(([key,label]) => E.input(key,label,extra[key] ?? defaults[key],false)).join('')}</div>${n >= 31 ? '<p class="text-xs text-amber-800">แบบร่างทั่วไป: ต้องตรวจตำแหน่งกับแบบพิมพ์ต้นฉบับก่อนยื่นศาล</p>' : ''}`;
+            box.innerHTML = `<div class="text-sm font-bold">${esc(doc.formCode)} ${esc(names[n] || doc.documentTitle)}</div><p class="text-xs">ช่องด้านล่างตรงกับข้อมูลบนแบบพิมพ์ด้านขวา การแก้ไขมีผลเฉพาะเอกสารนี้</p><div class="grid grid-cols-2 gap-2">${fields.map(([key,label]) => E.input(key,label,extra.CaseFields?.[key] ?? lawCase[key],true)).join('')}${(n === 9 ? [] : special[n] || []).map(([key,label]) => E.input(key,label,extra[key] ?? defaults[key],false)).join('')}</div>${n === 9 ? '<p class="text-xs text-blue-800">ข้อมูลทนายด้านหลังดึงจากโปรไฟล์ทนายของคดี ใช้ปุ่ม “ดึงข้อมูลทนายจากการตั้งค่า” เพื่อปรับข้อมูลให้เป็นปัจจุบัน</p>' : ''}${n >= 31 ? '<p class="text-xs text-amber-800">แบบร่างทั่วไป: ต้องตรวจตำแหน่งกับแบบพิมพ์ต้นฉบับก่อนยื่นศาล</p>' : ''}`;
             box.hidden = false;
             if (n === 15) box.insertAdjacentHTML('beforeend','<p class="text-xs text-teal-800">แบ่งหน้าอัตโนมัติ: หน้าแรกปรับตามพื้นที่ใต้หัวเอกสาร • หน้าต่อสูงสุด 18 ช่อง • ข้อความยาวใช้พื้นที่เพิ่มและต่อหน้าได้ ช่องจำนวนพยานเว้นว่างเพื่อรวมจากรายการอัตโนมัติ</p>');
             const hide = (el, yes) => {if(el) el.hidden = yes;};
+            const selfFillButton = document.getElementById('btnQuickFillSelf');
+            const clientFillButton = document.getElementById('btnQuickFillClient');
+            if (selfFillButton) selfFillButton.textContent = n === 9 ? 'ดึงข้อมูลทนายจากการตั้งค่า' : 'ดึงข้อมูลของฉัน (บัญชีที่เข้าสู่ระบบ)';
+            if (clientFillButton) clientFillButton.textContent = n === 9 ? 'ดึงข้อมูลผู้แต่งทนายในคดี' : 'ดึงข้อมูลลูกความในคดี';
             hide(document.getElementById('edDocDay')?.closest('.bg-slate-50'),n === 3);
             const identityHeading = document.getElementById('edDocDay')?.closest('.bg-slate-50')?.querySelector('span.text-xs');
             if (identityHeading) identityHeading.textContent = [1,2,3,8,15].includes(n) ? 'ข้อมูลเลขคดีบนแบบพิมพ์' : [12,13,14].includes(n) ? 'วันออกหมาย / ผู้รับหมายและที่อยู่' : n === 10 ? 'ผู้มอบฉันทะ / ที่อยู่ผู้รับมอบฉันทะ' : 'ฐานะผู้ยื่นคำคู่ความ / ทนายความ';
@@ -121,6 +138,9 @@
         const safeFields = Object.fromEntries(Object.entries(fields).map(([key,value]) => [key,esc(value)]));
         for (const [key] of special[number(doc.formCode)] || []) {
             if (typeof extra[key] === 'string') extra[key] = esc(extra[key]);
+        }
+        if (extra.Form9Lawyer && typeof extra.Form9Lawyer === 'object') {
+            extra.Form9Lawyer = Object.fromEntries(Object.entries(extra.Form9Lawyer).map(([key,value]) => [key, typeof value === 'string' ? esc(value) : value]));
         }
         if ([3,8,15].includes(number(doc.formCode))) {
             let rows;

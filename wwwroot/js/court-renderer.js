@@ -80,18 +80,21 @@ window.CourtRenderer = {
     },
 
     // วัดความกว้างพิกเซลจริงของข้อความด้วยฟอนต์ Sarabun 14pt บน HTML5 Canvas เพื่อให้จัดข้อความเต็มบรรทัดพอดี
-    measureThaiTextPx(text, isBold = false) {
+    measureThaiTextPx(text, isBold = false, fontFamily = 'Sarabun, sans-serif', fontSizePt = 14) {
         if (!text) return 0;
-        const fallbackPx = this.getThaiVisualLength(text) * (isBold ? 9.2 : 8.7);
+        const fontScale = fontSizePt / 14;
+        const fallbackPx = this.getThaiVisualLength(text) * (isBold ? 9.2 : 8.7) * fontScale;
         try {
             if (!this._measureCanvas && typeof document !== 'undefined') {
                 this._measureCanvas = document.createElement('canvas');
             }
             if (this._measureCanvas) {
                 const ctx = this._measureCanvas.getContext('2d');
-                ctx.font = `${isBold ? '700' : '400'} 14pt Sarabun, sans-serif`;
+                ctx.font = `${isBold ? '700' : '400'} ${fontSizePt}pt ${fontFamily}`;
                 const measured = ctx.measureText(text).width;
-                return Math.max(measured, fallbackPx * 0.94);
+                // Canvas uses the selected font metrics; the character-count fallback
+                // systematically overestimates Thai text and leaves a visible right gap.
+                if (Number.isFinite(measured) && measured > 0) return measured;
             }
         } catch {
             // fallback
@@ -133,7 +136,8 @@ window.CourtRenderer = {
             '|' +
             `(?:ป\\.วิ\\.พ\\.|ป\\.วิ\\.อ\\.|ป\\.อ\\.|พ\\.ร\\.ก\\.|พ\\.ร\\.บ\\.|พ\\.ศ\\.|ค\\.ศ\\.|ม\\.)` +
             '|' +
-            `[0-9๐-๙]+(?:[,./-][0-9๐-๙]+)*` +
+            // Treat numeric values as one unbreakable unit, including currency decimals.
+            `[0-9๐-๙]+(?:[,.][0-9๐-๙]+)*(?:[/][0-9๐-๙]+)?(?:-[0-9๐-๙]+)*` +
             ')',
             'g'
         );
@@ -189,61 +193,61 @@ window.CourtRenderer = {
     // 1. จัดให้เต็มบรรทัดก่อน แล้วจึงพิจารณาคำฉีก (ฉีกคำได้แต่ให้มีความหมายตามพจนานุกรมภาษาไทย)
     // 2. ยกเว้นตัวเลขที่เป็นตัวเงินห้ามฉีกกลางตัวเลข และวันเดือนปีแบ่งเป็น วัน / เดือน / ปี
     // 3. เกลี่ยระยะตัวอักษรในบรรทัดที่ไม่ใช่บรรทัดสุดท้ายให้เต็มเส้นประอย่างสวยงามโดยไม่ถ่างช่องว่างระหว่างคำ
-    layoutParagraphIntoThaiLines(title, rawText, isIndented = true) {
+    layoutParagraphIntoThaiLines(title, rawText, isIndented = true, options = {}) {
         const cleanTitle = this.normalizeThaiSpacing(title || '');
         const cleanText = this.normalizeThaiSpacing(rawText || '');
         const tokens = this.tokenizeThaiLineText(cleanText);
+        const fontFamily = options.fontFamily || 'Sarabun, sans-serif';
+        const fontSizePt = options.fontSizePt || 14;
 
-        const maxFullLinePx = 626; // ความกว้างมาตรฐานของบรรทัดเส้นประ (จากความกว้างเต็ม 650px)
-        const maxIndentedLinePx = 586; // ความกว้างบรรทัดแรกที่มีย่อหน้า 2.5rem (40px -> 650 - 40 = 610px)
-        const flexSqueezeAllowancePx = 22; // อนุญาตให้ดึงคำถัดไปขึ้นมาเติมให้เต็มบรรทัดได้อีก 22px แล้วบีบช่องไฟเล็กน้อย
+        const maxFullLinePx = 648; // Match the printable width of the dotted rule (650px less right padding).
+        const maxIndentedLinePx = 608; // First line reserves 40px for the paragraph indent.
 
         const lines = [];
         let isFirstLine = true;
         const titlePrefixPlain = cleanTitle ? `${cleanTitle} ` : '';
         const titlePrefixHtml = cleanTitle ? `<strong>${cleanTitle}</strong> ` : '';
-        const titlePrefixPx = cleanTitle ? this.measureThaiTextPx(titlePrefixPlain, true) : 0;
+        const titlePrefixPx = cleanTitle ? this.measureThaiTextPx(titlePrefixPlain, true, fontFamily, fontSizePt) : 0;
 
         let currentPlain = '';
         let currentHtml = '';
-        let currentSqueezeStyle = '';
 
         const flushLine = (isLastLine = false) => {
             const trimmedPlain = currentPlain.trimEnd();
             const trimmedHtml = currentHtml.replace(/\s+$/, '');
             const fullLinePlain = (isFirstLine ? titlePrefixPlain : '') + trimmedPlain;
-            const bodyPx = this.measureThaiTextPx(trimmedPlain, false);
+            const bodyPx = this.measureThaiTextPx(trimmedPlain, false, fontFamily, fontSizePt);
             const fullLinePx = (isFirstLine ? titlePrefixPx : 0) + bodyPx;
             const effectiveLimit = (isFirstLine && isIndented) ? maxIndentedLinePx : maxFullLinePx;
 
-            let autoFitStyle = currentSqueezeStyle;
+            let autoFitStyle = '';
             if (fullLinePx > effectiveLimit + 12) {
-                autoFitStyle = 'font-size: 13.3pt; letter-spacing: -0.18px;';
+                autoFitStyle = `font-size: ${(fontSizePt - 0.7).toFixed(1)}pt; letter-spacing: -0.18px;`;
             } else if (fullLinePx > effectiveLimit + 2) {
-                autoFitStyle = 'font-size: 13.6pt; letter-spacing: -0.1px;';
-            } else if (!isLastLine && fullLinePx < effectiveLimit - 4 && fullLinePx >= effectiveLimit * 0.78) {
+                autoFitStyle = `font-size: ${(fontSizePt - 0.4).toFixed(1)}pt; letter-spacing: -0.1px;`;
+            } else if (!isLastLine && fullLinePx < effectiveLimit - 1) {
                 // กรณีไม่ใช่บรรทัดสุดท้ายของย่อหน้า ให้เกลี่ยช่องไฟละเอียดเพื่อให้ข้อความเต็มบรรทัดพอดีตามแบบพิมพ์ศาล
                 const gapPx = effectiveLimit - fullLinePx;
-                const charCount = Math.max(25, this.getThaiVisualLength(fullLinePlain));
-                const spaceCount = (fullLinePlain.match(/ /g) || []).length;
-                const addLetterPx = Math.min(0.45, +(gapPx / (charCount + spaceCount * 3)).toFixed(2));
-                const remainingGap = Math.max(0, gapPx - addLetterPx * charCount);
-                const addWordPx = spaceCount > 0 ? Math.min(2.8, +(remainingGap / spaceCount).toFixed(2)) : 0;
-                if (addLetterPx > 0.04 || addWordPx > 0.2) {
-                    autoFitStyle = `letter-spacing: ${addLetterPx}px; word-spacing: ${addWordPx}px;`;
+                const charCount = Math.max(1, this.getThaiVisualLength(fullLinePlain));
+                const addLetterPx = +(gapPx / charCount).toFixed(2);
+                if (addLetterPx > 0) {
+                    autoFitStyle = `letter-spacing: ${addLetterPx}px;`;
                 }
             }
 
+            const lineHeightPx = Math.min(29, Math.max(25, fontSizePt * 1.6));
+            const contentFontStyle = options.fontFamily
+                ? `font-family:${fontFamily};font-size:${fontSizePt}pt;font-weight:${options.fontWeight ?? 400};line-height:${lineHeightPx}px;padding-top:${Math.max(0, 30 - lineHeightPx)}px;`
+                : '';
             lines.push({
                 indent: isFirstLine && isIndented,
                 plain: fullLinePlain,
                 html: (isFirstLine ? titlePrefixHtml : '') + trimmedHtml,
-                extraStyle: autoFitStyle
+                extraStyle: [contentFontStyle, autoFitStyle].filter(Boolean).join(' ')
             });
             isFirstLine = false;
             currentPlain = '';
             currentHtml = '';
-            currentSqueezeStyle = '';
         };
 
         for (let i = 0; i < tokens.length; i++) {
@@ -257,18 +261,12 @@ window.CourtRenderer = {
                 ? (maxIndentedLinePx - titlePrefixPx)
                 : maxFullLinePx;
 
-            const candidatePx = this.measureThaiTextPx(candidatePlain, false);
+            const candidatePx = this.measureThaiTextPx(candidatePlain, false, fontFamily, fontSizePt);
             const wrappedTokHtml = tok === ' ' ? ' ' : `<span class="court-nowrap-token">${tok}</span>`;
 
             if (candidatePx <= currentLimitPx || currentPlain.length === 0) {
                 currentPlain = candidatePlain;
                 currentHtml += wrappedTokHtml;
-            } else if (candidatePx <= currentLimitPx + flexSqueezeAllowancePx && tok !== ' ') {
-                // ดึงคำที่มีความหมาย หรือตัวเลข/วัน/เดือน/ปี ที่เกินขอบบรรทัดเพียงเล็กน้อยขึ้นมาเติมให้เต็มบรรทัดก่อน
-                currentPlain = candidatePlain;
-                currentHtml += wrappedTokHtml;
-                currentSqueezeStyle = 'font-size: 13.5pt; letter-spacing: -0.12px;';
-                flushLine(false);
             } else {
                 flushLine(false);
                 if (tok !== ' ') {
@@ -336,7 +334,7 @@ window.CourtRenderer = {
                 ${sigOverlay}
                 <span>ลงชื่อ <span class="court-dotted-line" style="min-width:${lineMinWidth};">&nbsp;</span> ${signerRole || ''}</span>
             </div>
-            ${signerName ? `<div class="court-signature-line">(${signerName})</div>` : ''}
+            ${signerName ? `<div class="court-signature-line court-signature-name">(${signerName})</div>` : ''}
         </div>`;
     },
 
@@ -501,21 +499,32 @@ window.CourtRenderer = {
 
         const doc = this.resolveEffectiveDocumentSignatures(rawDoc, extra);
 
-        if (formCode === '(๑)') return this.renderCaseCoverForm1(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๒)') return this.renderCaseFrontForm2(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๓)') return this.renderIndexForm3(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๕)') return this.renderEndOfPlaintForm5(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๖)') return this.renderEndOfCrimPlaintForm6(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๘)') return this.renderPropertyListForm8(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๙)') return this.renderAppointmentForm9(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๑๐)') return this.renderProxyForm10(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๑๒)') return this.renderSummonsForm12(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๑๓)') return this.renderSummonsForm13(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๑๔)') return this.renderSummonsForm14(doc, lawCase, clauses, extra, t);
-        if (formCode === '(๑๕)') return this.renderWitnessForm15(doc, lawCase, clauses, extra, t);
+        let html;
+        if (formCode === '(๑)') html = this.renderCaseCoverForm1(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๒)') html = this.renderCaseFrontForm2(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๓)') html = this.renderIndexForm3(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๕)') html = this.renderEndOfPlaintForm5(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๖)') html = this.renderEndOfCrimPlaintForm6(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๘)') html = this.renderPropertyListForm8(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๙)') html = this.renderAppointmentForm9(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๑๐)') html = this.renderProxyForm10(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๑๒)') html = this.renderSummonsForm12(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๑๓)') html = this.renderSummonsForm13(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๑๔)') html = this.renderSummonsForm14(doc, lawCase, clauses, extra, t);
+        else if (formCode === '(๑๕)') html = this.renderWitnessForm15(doc, lawCase, clauses, extra, t);
+        else html = this.renderStandardGarudaAndContinuation(doc, lawCase, clauses, extra, t);
 
-        // Standard Garuda Forms: (๔) คำฟ้อง, (๗) คำร้อง/คำแถลง/คำขอ, (๑๑)/(๑๑ ก.) คำให้การจำเลย, (๔๐ ก.)
-        return this.renderStandardGarudaAndContinuation(doc, lawCase, clauses, extra, t);
+        const fontFamilies = {
+            'th-sarabun-new': "'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', sans-serif",
+            sarabun: "'Sarabun', 'TH Sarabun New', sans-serif",
+            'angsana-new': "'Angsana New', 'AngsanaUPC', serif",
+            'cordia-new': "'Cordia New', 'CordiaUPC', sans-serif"
+        };
+        const isDefenseForm = formCode === '(๑๑)' || formCode === '(๑๑ ก.)';
+        const family = fontFamilies[extra.TextFontFamily] || fontFamilies[isDefenseForm ? 'th-sarabun-new' : 'sarabun'];
+        const size = [12, 14, 16, 18].includes(Number(extra.TextFontSize)) ? Number(extra.TextFontSize) : (isDefenseForm ? 16 : 14);
+        const pageStyle = `--court-entry-font-family:${family};--court-entry-font-size:${size}pt;`;
+        return html.replace(/<div class="court-page"(?=[\s>])/g, `<div class="court-page" style="${pageStyle}"`);
     },
 
     // แบบ (๑) ปกหน้าสำนวน ตาม PDF
@@ -921,35 +930,102 @@ window.CourtRenderer = {
             `;
         }
 
-        // Keep existing limits for forms 4/11; form 7 fills its available first-page area.
+        // Forms 7 and 11 fill the actual writing area available above the bottom note.
         let page1MaxLines = isPlaint4 ? 3 : (isDefense11 ? 5 : 4);
-        // Form 7 uses the actual space above the note, keeping a quiet 16px gap.
-        // Measure with the same A4 styles as preview/print; do not stretch Thai text.
-        if (formCode === '(๗)' && typeof document !== 'undefined' && document.body) {
+        // Measure with the same A4 styles as preview/print and keep a quiet gap before the note.
+        if ((formCode === '(๗)' || isDefense11) && typeof document !== 'undefined' && document.body) {
             const probe = document.createElement('div');
             probe.className = 'court-page';
             probe.setAttribute('aria-hidden', 'true');
             probe.style.cssText = 'position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none;zoom:1;';
             probe.style.setProperty('padding', '15mm 16mm 16mm 22mm', 'important');
-            probe.innerHTML = `<div class="court-page-top">${this.renderCommonHeader(doc, lawCase, t, { forCourtUse:false })}${page1PreambleHtml}<div data-body-start></div></div>${this.renderBottomNoteSection(doc, lawCase, false, false)}`;
+            probe.innerHTML = `<div class="court-page-top">${this.renderCommonHeader(doc, lawCase, t, { forCourtUse:isDefense11 })}${page1PreambleHtml}<div data-body-start></div></div>${this.renderBottomNoteSection(doc, lawCase, isPlaint4, isDefense11)}`;
             document.body.appendChild(probe);
             try {
                 const start = probe.querySelector('[data-body-start]').getBoundingClientRect().top;
                 const end = probe.querySelector('.court-page-bottom-note').getBoundingClientRect().top;
-                page1MaxLines = Math.max(4, Math.floor((end - start - 16) / 31));
+                const availableLines = Math.floor(Math.max(0, end - start - 16) / 31);
+                page1MaxLines = isDefense11 ? availableLines : Math.max(4, availableLines);
             } finally { probe.remove(); }
         }
-        const contPageMaxLines = 21;
-        const footerLinesCount = (permissionText ? 1 : 0) + 6 + ((doc.drafterName || doc.typistName) ? 5 : 0);
+
+        const permissionParagraphHtml = permissionText
+            ? `<div class="court-closing-permission">${t(permissionText)}</div>`
+            : '';
+        const footerSignBlock = `
+            ${permissionParagraphHtml}
+            ${this.renderClosingPrayerLine(t(doc.closingPrayer || 'ควรมิควรแล้วแต่จะโปรด'))}
+            ${this.renderCenteredSigRow(doc.signatureImageBase64, t(doc.signerName || ''), t(doc.signerRole || doc.lawyerRoleInDoc || (isDefense11 ? 'จำเลย' : (isPlaint4 ? 'โจทก์' : 'ผู้ร้อง / ผู้แถลง / ผู้ขอ'))))}
+            ${(doc.drafterName || doc.typistName) ? `
+            <div class="court-signature-line">
+                คำคู่ความฉบับนี้ <span class="court-dotted-line" style="min-width:165px; font-weight:600;">${t(doc.drafterName || '')}</span> เป็นผู้เรียง / <span class="court-dotted-line" style="min-width:165px; font-weight:600;">${t(doc.typistName || '')}</span> เป็นผู้พิมพ์
+            </div>
+            ${this.renderCenteredSigRow(doc.drafterSignatureBase64, t(doc.drafterName || ''), 'ผู้เรียง')}
+            ${this.renderCenteredSigRow(doc.typistSignatureBase64, t(doc.typistName || ''), 'ผู้พิมพ์')}` : ''}
+        `;
+
+        let contPageMaxLines = 21; // Browser rendering replaces this fallback with the measured A4 capacity.
+        let footerLinesCount = (permissionText ? 1 : 0) + 6 + ((doc.drafterName || doc.typistName) ? 5 : 0);
+        let contLastPageMaxLines = Math.max(1, contPageMaxLines - footerLinesCount);
+        if (isDefense11 && typeof document !== 'undefined' && document.body) {
+            const probe = document.createElement('div');
+            probe.className = 'court-page';
+            probe.setAttribute('aria-hidden', 'true');
+            probe.style.cssText = 'position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none;transform:none;margin:0;zoom:1;';
+            probe.style.setProperty('padding', '15mm 16mm 16mm 22mm', 'important');
+            probe.innerHTML = `<div class="court-page-top">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13pt;color:#334155;">
+                    <div><strong>(๔๐ ก.)</strong> ใบต่อคำคู่ความ — ${t(doc.documentTitle)}</div>
+                    <div>- ${t(2)} -</div>
+                </div>
+                <div class="court-lined-body">
+                    <div class="court-thai-line" data-continuation-line>&nbsp;</div>
+                    ${footerSignBlock}
+                </div>
+            </div>`;
+            document.body.appendChild(probe);
+            try {
+                const line = probe.querySelector('[data-continuation-line]');
+                const pageRect = probe.getBoundingClientRect();
+                const contentBottom = pageRect.bottom - parseFloat(getComputedStyle(probe).paddingBottom);
+                const lineRect = line.getBoundingClientRect();
+                const lastFooterElement = line.parentElement.lastElementChild;
+                const footerBottom = lastFooterElement.getBoundingClientRect().bottom
+                    + parseFloat(getComputedStyle(lastFooterElement).marginBottom || '0');
+                const lineHeight = lineRect.height;
+                contPageMaxLines = Math.max(1, Math.floor((contentBottom - lineRect.top - 8) / lineHeight));
+                const footerSpace = Math.max(0, footerBottom - lineRect.bottom);
+                contLastPageMaxLines = Math.max(1, Math.floor((contentBottom - lineRect.top - footerSpace - 8) / lineHeight));
+                footerLinesCount = Math.max(1, contPageMaxLines - contLastPageMaxLines);
+            } finally { probe.remove(); }
+        }
 
         // แปลงแต่ละข้อเป็นบรรทัดที่ตัดคำตามพจนานุกรมภาษาไทย (Intl.Segmenter 'th') และเคาะวรรค ๑ เคาะตามระบบภาษาไทย
         const allLines = [];
+        const fontFamilies = {
+            'th-sarabun-new': "'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', sans-serif",
+            sarabun: "'Sarabun', 'TH Sarabun New', sans-serif",
+            'angsana-new': "'Angsana New', 'AngsanaUPC', serif",
+            'cordia-new': "'Cordia New', 'CordiaUPC', sans-serif"
+        };
+        const allowedFontSizes = [12, 14, 16, 18];
+        const legacyTextStyle = cleanedClauses.find(c => c.FontFamily || c.FontSize) || {};
+        const defaultFont = isDefense11 ? 'th-sarabun-new' : 'sarabun';
+        const requestedFont = extra.TextFontFamily || legacyTextStyle.FontFamily;
+        const fontKey = fontFamilies[requestedFont] ? requestedFont : defaultFont;
+        const requestedSize = Number(extra.TextFontSize || legacyTextStyle.FontSize || (isDefense11 ? 16 : 14));
+        const fontSize = allowedFontSizes.includes(requestedSize) ? requestedSize : (isDefense11 ? 16 : 14);
+        const textStyle = {
+            fontFamily: fontFamilies[fontKey],
+            fontSizePt: fontSize,
+            fontWeight: isDefense11 ? 300 : 400
+        };
         cleanedClauses.forEach(c => {
             const title = t(this.normalizeThaiSpacing(c.ClauseTitle || c.clauseTitle || ''));
             const rawContent = t(this.normalizeThaiSpacing(c.Content || c.content || ''));
             const paragraphs = rawContent.split('\n').map(s => s.trim()).filter(Boolean);
             paragraphs.forEach((p, pIdx) => {
-                const pLines = this.layoutParagraphIntoThaiLines(pIdx === 0 ? title : '', p, true);
+                const pLines = this.layoutParagraphIntoThaiLines(pIdx === 0 ? title : '', p, true, textStyle);
                 allLines.push(...pLines);
             });
         });
@@ -977,39 +1053,25 @@ window.CourtRenderer = {
         // ตรวจสอบหน้าใบต่อ (๔๐ ก.) หน้าสุดท้ายว่าเมื่อรวมส่วนลงชื่อท้ายคำคู่ความแล้วเกินความจุหน้าหรือไม่ หากเกินให้ตัดขึ้นหน้าใบต่อใหม่ทันทีเพื่อไม่ให้ตกหน้ากระดาษ
         if (contPages.length > 0) {
             const lastChunk = contPages[contPages.length - 1];
-            if (lastChunk.length + footerLinesCount > contPageMaxLines) {
-                const safeKeepCount = Math.max(1, contPageMaxLines - 2);
-                if (lastChunk.length > safeKeepCount) {
-                    const carryOver = lastChunk.splice(safeKeepCount);
-                    contPages.push(carryOver);
-                } else {
-                    contPages.push([]);
-                }
+            if (lastChunk.length > contLastPageMaxLines) {
+                const carryOver = lastChunk.splice(contLastPageMaxLines);
+                contPages.push(carryOver);
             }
+        }
+
+        if (contPages.length > 1) {
+            const penultimatePage = contPages[contPages.length - 2];
+            const lastPage = contPages[contPages.length - 1];
+            const availableLines = Math.max(0, contPageMaxLines - penultimatePage.length);
+            // Move every line that fits before the final signature page.
+            const movableLines = Math.min(availableLines, lastPage.length);
+            penultimatePage.push(...lastPage.splice(0, movableLines));
         }
 
         const renderLineHtml = (line) => `
             <div class="court-thai-line" style="${line.indent ? 'padding-left: 2.5rem;' : 'padding-left: 0;'} ${line.extraStyle || ''}">
                 ${line.html}
             </div>
-        `;
-
-        // ย่อหน้าสุดท้ายก่อน ควรมิควรแล้วแต่จะโปรด: ขอศาลได้โปรดอนุญาต (เลือกเปิด/ปิดได้)
-        const permissionParagraphHtml = permissionText
-            ? `<div class="court-closing-permission">${t(permissionText)}</div>`
-            : '';
-
-        // ส่วนท้ายคำคู่ความ (หลังข้อสุดท้าย): ขอศาลได้โปรดอนุญาต -> ควรมิควรแล้วแต่จะโปรด (กึ่งกลาง+เคาะขวา 6 เคาะ) -> ลงชื่อ (กึ่งกลางบรรทัด คนละบรรทัด ล็อกกริด 32px ไม่ทับเส้นประ)
-        const footerSignBlock = `
-            ${permissionParagraphHtml}
-            ${this.renderClosingPrayerLine(t(doc.closingPrayer || 'ควรมิควรแล้วแต่จะโปรด'))}
-            ${this.renderCenteredSigRow(doc.signatureImageBase64, t(doc.signerName || ''), t(doc.signerRole || doc.lawyerRoleInDoc || (isDefense11 ? 'จำเลย' : (isPlaint4 ? 'โจทก์' : 'ผู้ร้อง / ผู้แถลง / ผู้ขอ'))))}
-            ${(doc.drafterName || doc.typistName) ? `
-            <div class="court-signature-line">
-                คำคู่ความฉบับนี้ <span class="court-dotted-line" style="min-width:165px; font-weight:600;">${t(doc.drafterName || '')}</span> เป็นผู้เรียง / <span class="court-dotted-line" style="min-width:165px; font-weight:600;">${t(doc.typistName || '')}</span> เป็นผู้พิมพ์
-            </div>
-            ${this.renderCenteredSigRow(doc.drafterSignatureBase64, t(doc.drafterName || ''), 'ผู้เรียง')}
-            ${this.renderCenteredSigRow(doc.typistSignatureBase64, t(doc.typistName || ''), 'ผู้พิมพ์')}` : ''}
         `;
 
         // Page 1 HTML (ใช้ Flex Column แยกเนื้อหาด้านบน กับ เส้นทึบสีดำก่อนท้ายกระดาษด้านล่าง เพื่อไม่ให้ทับกันเด็ดขาด)
@@ -1032,6 +1094,13 @@ window.CourtRenderer = {
         if (contPages.length > 0) {
             contPages.forEach((chunk, pageIdx) => {
                 const isLastPage = pageIdx === contPages.length - 1;
+                const pageLines = chunk.slice();
+                if (!isLastPage) {
+                    // Keep the ruled area full when signature space shifts lines to the final page.
+                    while (pageLines.length < contPageMaxLines) {
+                        pageLines.push({ indent: false, plain: '', html: '&nbsp;', extraStyle: '' });
+                    }
+                }
                 html += `
                 <div class="court-page">
                     <div class="court-page-top">
@@ -1041,7 +1110,7 @@ window.CourtRenderer = {
                             <div>- ${t(pageIdx + 2)} -</div>
                         </div>
                         <div class="court-lined-body">
-                            ${chunk.map(renderLineHtml).join('')}
+                            ${pageLines.map(renderLineHtml).join('')}
                             ${isLastPage ? footerSignBlock : ''}
                         </div>
                     </div>
@@ -1226,11 +1295,17 @@ window.CourtRenderer = {
     renderAppointmentForm9(doc, lawCase, clauses, extra, t) {
         const powerText = clauses[0]?.Content || clauses[0]?.content ||
             'ดำเนินกระบวนพิจารณาใดๆ ไปในทางจำหน่ายสิทธิของข้าพเจ้าได้ด้วย เช่น การยอมรับตามที่คู่ความอีกฝ่ายหนึ่งเรียกร้อง การถอนฟ้อง การประนีประนอมยอมความ การสละสิทธิหรือใช้สิทธิในการอุทธรณ์หรือฎีกาหรือขอให้พิจารณาคดีใหม่';
-        const lawyerName = extra.AppointedLawyerName ?? doc.drafterName ?? 'นายปิยะณัฐ วัชราภรณ์';
+        const lawyerProfile = extra.Form9Lawyer || {};
+        const lawyerValue = (key, legacyValue = '') => t(
+            Object.prototype.hasOwnProperty.call(lawyerProfile, key)
+                ? lawyerProfile[key] ?? ''
+                : legacyValue ?? ''
+        );
+        const lawyerName = lawyerValue('fullName', extra.AppointedLawyerName ?? doc.drafterName ?? '');
 
         return `
         <!-- หน้า ๑ ใบแต่งทนายความ (๙) -->
-        <div class="court-page">
+        <div class="court-page court-form9-page">
             ${this.renderCommonHeader(doc, lawCase, t)}
 
             <div class="court-preamble-row" style="margin-top:10px;">
@@ -1257,7 +1332,7 @@ window.CourtRenderer = {
         </div>
 
         <!-- หน้า ๒ คำรับเป็นทนายความ (ด้านหลังแบบพิมพ์ ๙ ตาม PDF) -->
-        <div class="court-page">
+        <div class="court-page court-form9-page">
             <div class="court-punch-hole"></div>
             <div style="text-align:center; font-weight:700; font-size:15.5pt; text-decoration:underline; margin-bottom:14px;">คำรับเป็นทนายความ</div>
 
@@ -1265,46 +1340,46 @@ window.CourtRenderer = {
                 <span>ข้าพเจ้า</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(lawyerName)}</span>
             </div>
             <div class="court-preamble-row compact" style="margin:6px 0;">
-                <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(doc.requesterCitizenId || '3730100915068', doc.useThaiNumerals !== false)}
+                <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(lawyerValue('citizenId', doc.requesterCitizenId), doc.useThaiNumerals !== false)}
             </div>
             <div class="court-preamble-row compact">
-                <span>ใบอนุญาตให้เป็นทนายความเลขที่</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(extra.LicenseNo ?? '๗๘๓๔/๒๕๒๙')}</span>
-                <span>ได้รับอนุญาตให้ว่าความ</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.Jurisdiction ?? 'ทั่วราชอาณาจักร')}</span>
+                <span>ใบอนุญาตให้เป็นทนายความเลขที่</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${lawyerValue('licenseNo', extra.LicenseNo)}</span>
+                <span>ได้รับอนุญาตให้ว่าความ</span> <span class="court-dotted-line" style="flex:1.2;">${lawyerValue('licenseJurisdiction', extra.Jurisdiction)}</span>
             </div>
             <div class="court-preamble-row indent compact">
-                <span>ที่อยู่ปัจจุบันเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(doc.requesterHouseNo || '๙๐/๓')}</span>
-                <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.5;">-</span>
-                <span>ถนน</span> <span class="court-dotted-line" style="flex:1.4;">${t(doc.requesterRoad || 'ปลัดมณฑล')}</span>
+                <span>ที่อยู่ปัจจุบันเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${lawyerValue('houseNo', doc.requesterHouseNo)}</span>
+                <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.5;">${lawyerValue('moo', doc.requesterMoo)}</span>
+                <span>ถนน</span> <span class="court-dotted-line" style="flex:1.4;">${lawyerValue('road', doc.requesterRoad)}</span>
             </div>
             <div class="court-preamble-row compact">
-                <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">-</span>
-                <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(doc.requesterSubDistrict || 'เมืองเหนือ')}</span>
+                <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">${lawyerValue('soi', doc.requesterSoi)}</span>
+                <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${lawyerValue('subDistrict', doc.requesterSubDistrict)}</span>
             </div>
             <div class="court-preamble-row compact">
-                <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.1;">${t(doc.requesterDistrict || 'เมืองฯ')}</span>
-                <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.1;">${t(doc.requesterProvince || 'ศรีสะเกษ')}</span>
-                <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(doc.requesterPostalCode || '๓๓๐๐๐')}</span>
+                <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.1;">${lawyerValue('district', doc.requesterDistrict)}</span>
+                <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.1;">${lawyerValue('province', doc.requesterProvince)}</span>
+                <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${lawyerValue('postalCode', doc.requesterPostalCode)}</span>
             </div>
             <div class="court-preamble-row compact">
-                <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${t(doc.requesterPhone || '-')}</span>
+                <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${lawyerValue('phone', doc.requesterPhone)}</span>
                 <span>โทรสาร</span> <span class="court-dotted-line" style="flex:1;">-</span>
             </div>
             <div class="court-preamble-row compact"><span>ไปรษณีย์อิเล็กทรอนิกส์</span> <span class="court-dotted-line" style="flex:1;">-</span></div>
 
             <div class="court-preamble-row indent compact" style="margin-top:6px;">
-                <span>สำนักงานอยู่ที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(doc.requesterHouseNo || '๙๐/๓')}</span>
-                <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.5;">-</span>
-                <span>ถนน</span> <span class="court-dotted-line" style="flex:1.4;">${t(doc.requesterRoad || 'ปลัดมณฑล')}</span>
+                <span>สำนักงานอยู่ที่</span> <span class="court-dotted-line" style="flex:0.8;">${lawyerValue('houseNo', doc.requesterHouseNo)}</span>
+                <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.5;">${lawyerValue('moo', doc.requesterMoo)}</span>
+                <span>ถนน</span> <span class="court-dotted-line" style="flex:1.4;">${lawyerValue('road', doc.requesterRoad)}</span>
             </div>
             <div class="court-preamble-row compact">
-                <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">-</span>
-                <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(doc.requesterSubDistrict || 'เมืองเหนือ')}</span>
+                <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">${lawyerValue('soi', doc.requesterSoi)}</span>
+                <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${lawyerValue('subDistrict', doc.requesterSubDistrict)}</span>
             </div>
             <div class="court-preamble-row compact">
-                <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1;">${t(doc.requesterDistrict || 'เมืองฯ')}</span>
-                <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1;">${t(doc.requesterProvince || 'ศรีสะเกษ')}</span>
-                <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.7;">${t(doc.requesterPostalCode || '๓๓๐๐๐')}</span>
-                <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${t(doc.requesterPhone || '-')}</span>
+                <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1;">${lawyerValue('district', doc.requesterDistrict)}</span>
+                <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1;">${lawyerValue('province', doc.requesterProvince)}</span>
+                <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.7;">${lawyerValue('postalCode', doc.requesterPostalCode)}</span>
+                <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${lawyerValue('phone', doc.requesterPhone)}</span>
             </div>
             <div class="court-preamble-row" style="margin-top:8px;">
                 <span>ขอรับเป็นทนายความของ</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(doc.requesterFullName || '')}</span>

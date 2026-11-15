@@ -6,7 +6,7 @@
    const cid=Number(A.state.currentCaseId),user=A.state.currentUser;
    if(!user||user.role==='Admin'||!A.getAccessibleCases().some(c=>c.id===cid)||Number(A.state.currentDoc?.caseId)!==cid)return A.showToast('กรุณาเลือกเอกสารในคดีที่มีสิทธิ์');
    if(!['SELF','LAWYER_PLAINTIFF','LAWYER_DEFENDANT','CLIENT'].includes(type))return;
-   const generation=++this.generation,doc=A.state.currentDoc,source=type==='CLIENT'?'client':'self';
+   const generation=++this.generation,doc=A.state.currentDoc,source=type==='CLIENT'?'client':doc.formCode==='(๙)'?'case-lawyer':'self';
    const buttons=[...document.querySelectorAll('button[onclick^="App.quickFillProfile"]')];buttons.forEach(b=>b.disabled=true);
    try{const r=await fetch(`/api/cases/${cid}/quick-fill?source=${source}`);const data=await r.json().catch(()=>({}));if(!r.ok)throw Error(data.message||'ไม่มีสิทธิ์ดึงข้อมูลในคดีนี้');
     if(generation!==this.generation||A.state.currentDoc!==doc||Number(A.state.currentCaseId)!==cid)return;
@@ -18,6 +18,14 @@
   },
   apply(p,status,source){
    const set=(id,value)=>{const el=document.getElementById(id);if(el)el.value=value??'';};
+   if(source==='case-lawyer'&&A.state.currentDoc?.formCode==='(๙)'){
+    let extra={};try{extra=JSON.parse(A.state.currentDoc.extraFieldsJson||'{}')||{};}catch{}
+    extra.Form9Lawyer=A.toForm9LawyerProfile(p);
+    A.state.currentDoc.extraFieldsJson=JSON.stringify(extra);
+    A.state.currentDoc.drafterName=p.fullName||'';
+    A.state.currentDoc.drafterSignatureBase64=p.signatureDataUrl||'';
+    A.syncEditorToPreview();A.showToast('ดึงข้อมูลทนายเจ้าของคดีจากการตั้งค่าแล้ว');return;
+   }
    for(const key of ['FullName','CitizenId','Race','Nationality','Occupation','Age','HouseNo','Moo','Road','Soi','NearBy','SubDistrict','District','Province','PostalCode','Phone'])set('edRequester'+key,p[key[0].toLowerCase()+key.slice(1)]);
    const role=status||p.partySide+(p.partyOrder?`ที่ ${p.partyOrder}`:'');set('edRequesterStatus',role);set('edSignerName',p.fullName);set('edSignerRole',role);
    if(source==='self')set('edDrafterName',p.fullName);

@@ -11,15 +11,19 @@ public static class ProfileAutofill
             var lawCase=((List<LawCase>)h.Items["visibleCases"]!).Find(c=>c.Id==id);
             if(lawCase==null || user.Role=="Admin")return Results.NotFound();
             using var c=db.CreateConnection();
-            if(source=="self"){
-                var profile=await c.QuerySingleOrDefaultAsync<LawyerProfile>("SELECT * FROM SL_LawyerProfiles WHERE Id=@LawyerProfileId",user);
+            if(source=="self"||source=="case-lawyer"){
+                if(source=="case-lawyer"&&user.Role!="Lawyer"&&user.Role!="Clerk")return Results.Forbid();
+                var profileId=source=="case-lawyer"?lawCase.PrimaryLawyerId:user.LawyerProfileId;
+                var profile=await c.QuerySingleOrDefaultAsync<LawyerProfile>("SELECT * FROM SL_LawyerProfiles WHERE Id=@Id",new{Id=profileId});
                 if(profile==null)return Results.NotFound(new{message="ยังไม่มีข้อมูลส่วนตัวของบัญชีนี้"});
                 if(user.Role!="Lawyer")profile.SignatureDataUrl="";
-                return Results.Ok(new{profiles=new[]{profile},statusText=user.Role=="Lawyer"?lawCase.LawyerRole:"เสมียนทนาย"});
+                var statusText=source=="self"&&user.Role!="Lawyer"?"เสมียนทนาย":lawCase.LawyerRole;
+                return Results.Ok(new{profiles=new[]{profile},statusText});
             }
-            if(source!="client")return Results.BadRequest(new{message="เลือกดึงข้อมูลตนเองหรือลูกความในคดี"});
+            if(source!="client")return Results.BadRequest(new{message="เลือกดึงข้อมูลทนายหรือลูกความในคดี"});
             var parties=(await c.QueryAsync<CaseParty>("SELECT * FROM SL_CaseParties WHERE CaseId=@id AND IsOurClient=1 ORDER BY PartySide,PartyOrder",new{id})).ToList();
             if(parties.Count>0)return Results.Ok(new{profiles=parties,statusText=""});
+            if(lawCase.PartyVersion>0)return Results.BadRequest(new{message="ยังไม่มีลูกความที่รับว่าความ กรุณาเลือกในหน้าคู่ความของคดีก่อน"});
             // Legacy cases may have names on the case master but no individual client records.
             var side=new[]{"ผู้คัดค้าน","ผู้ร้อง","โจทก์","จำเลย"}.FirstOrDefault(s=>lawCase.LawyerRole.Contains(s));
             if(side==null)return Results.BadRequest(new{message="กรุณาระบุบทบาททนายและลูกความในข้อมูลคดีก่อน"});

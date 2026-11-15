@@ -52,6 +52,32 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
             """, new { sid = http.User.FindFirstValue("sid") ?? "" });
         if (user == null) return Results.Unauthorized();
         http.Items["account"] = user;
+        // Client sessions have a strict API allowlist; never reuse the staff case/file endpoints.
+        if (user.Role == "Client")
+        {
+            var links = (await conn.QueryAsync<ClientAccess>("""
+                SELECT a.* FROM SL_ClientCaseLinks a JOIN SL_LawCases c ON c.Id=a.CaseId
+                JOIN SL_CaseParties p ON p.Id=a.PartyId AND p.CaseId=a.CaseId AND p.IsOurClient=1
+                WHERE a.UserId=@Id AND a.IsActive=1 AND EXISTS(SELECT 1 FROM SL_UserAccounts owner
+                    WHERE owner.LawyerProfileId=c.PrimaryLawyerId AND owner.Role='Lawyer' AND owner.AccountStatus=N'Active')
+                """, user)).ToList();
+            if (links.Count == 0) return Results.Unauthorized();
+            http.Items["clientLinks"] = links;
+            var identity = await conn.QuerySingleAsync<ClientIdentity>("SELECT * FROM SL_ClientIdentities WHERE UserId=@Id",user);
+            if (path == "/api/auth/me" && !write)
+                return Results.Ok(new { user.Id,user.Username,user.FullName,user.Role,identity.MustChangePassword });
+            if (path != "/api/auth/logout" && !path.StartsWith("/api/client/")) return Results.StatusCode(403);
+            if (identity.MustChangePassword && path != "/api/client/password" && path != "/api/auth/logout")
+                return Results.Json(new {message="กรุณาเปลี่ยนรหัสผ่านเริ่มต้นก่อนดูข้อมูลคดี",mustChangePassword=true},statusCode:403);
+            if (path.StartsWith("/api/client/") && path is not "/api/client/password" and not "/api/client/cases") {
+                var selected = int.TryParse(http.Request.Query["caseId"],out var selectedId)
+                    ? links.FirstOrDefault(a=>a.CaseId==selectedId) : links.Count==1 ? links[0] : null;
+                if(selected==null)return Results.NotFound(new{message="เลือกคดีที่คุณมีสิทธิ์เข้าถึง"});
+                http.Items["clientAccess"]=selected;
+            }
+            return await next(ctx);
+        }
+        if (path.StartsWith("/api/client/")) return Results.StatusCode(403);
         bool admin = user.Role == "Admin", lawyer = user.Role == "Lawyer", clerk = user.Role == "Clerk";
         if (!admin && !lawyer && !clerk) return Results.StatusCode(403);
         var mappings = (await conn.QueryAsync<LawyerClerkMapping>("SELECT * FROM SL_LawyerClerkMappings WHERE IsActive=1 AND (LawyerUserId=@Id OR ClerkUserId=@Id)", user)).ToList();
@@ -69,6 +95,7 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
         var area = parts.Length > 1 ? parts[1] : "";
         int routeId = int.TryParse(parts.ElementAtOrDefault(2), out var rid) ? rid : 0;
         if (area == "admin" && !admin) return Results.StatusCode(403);
+        if (area == "admin" && write && parts.ElementAtOrDefault(2) == "users" && int.TryParse(parts.ElementAtOrDefault(3),out var managedUser) && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_UserAccounts WHERE Id=@managedUser AND Role=N'Client'",new{managedUser})>0) return Results.StatusCode(403);
         if (admin && new[] { "cases", "documents", "files", "parties", "litigation", "signatures", "lawyers", "clerk-mappings" }.Contains(area)) return Results.StatusCode(403);
         if (area == "templates" && write && !admin) return Results.StatusCode(403);
         if (area == "cases")
@@ -83,14 +110,16 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
                 var table = area == "documents" ? "SL_CaseDocuments" : area == "files" ? "SL_CaseFileAttachments" : "SL_LitigationEvents";
                 var cid = await conn.ExecuteScalarAsync<int>($"SELECT CaseId FROM {table} WHERE Id=@routeId", new { routeId });
                 if (!caseIds.Contains(cid)) return Results.NotFound();
-                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_AppointmentFiles WHERE FileId=@routeId",new{routeId})>0)
+                var detachFileLinks = string.Equals(http.Request.Query["detachLinks"], "true", StringComparison.OrdinalIgnoreCase);
+                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_ClientChat WHERE FileId=@routeId",new{routeId})>0) return Results.Conflict(new{message="ไฟล์นี้เป็นเอกสารแนบในแชทลูกความ จึงยังลบแยกไม่ได้"});
+                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_AppointmentFiles WHERE FileId=@routeId",new{routeId})>0)
                     return Results.Conflict(new {message="ไฟล์นี้เชื่อมกับวันนัด กรุณายกเลิกการเชื่อมในวันนัดก่อนลบ"});
                 if (area == "documents" && write && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_CaseFileAttachments f JOIN SL_AppointmentFiles l ON l.FileId=f.Id WHERE f.DocumentId=@routeId",new{routeId})>0
                     && (HttpMethods.IsDelete(http.Request.Method) || ctx.Arguments.OfType<CaseDocument>().Any(d=>d.CaseId!=cid)))
                     return Results.Conflict(new {message="เอกสารนี้เชื่อมกับวันนัด จึงยังลบหรือย้ายคดีไม่ได้"});
                 if (clerk && area == "documents" && write && await conn.ExecuteScalarAsync<string>("SELECT Status FROM SL_CaseDocuments WHERE Id=@routeId", new { routeId }) != "ร่าง")
                     return Results.StatusCode(403);
-                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_LitigationEvents WHERE AttachmentId=@routeId", new { routeId }) > 0)
+                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_LitigationEvents WHERE AttachmentId=@routeId", new { routeId }) > 0)
                     return Results.Conflict(new { message = "ไฟล์นี้เป็นหลักฐานอ้างอิงในขั้นตอนคดี จึงยังลบไม่ได้" });
             }
             if (int.TryParse(http.Request.Query["caseId"], out var queryCase) && !caseIds.Contains(queryCase)) return Results.NotFound();
@@ -187,7 +216,7 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
             return key switch
             {
                 "cases" => caseIds.Contains(Id("id")),
-                "documents" or "recentDocuments" or "caseFiles" or "files" or "litigation" => caseIds.Contains(Id("caseId")),
+                "documents" or "recentDocuments" or "caseFiles" or "files" or "litigation" or "appointments" => caseIds.Contains(Id("caseId")),
                 "users" => admin || relatedUserIds.Contains(Id("id")),
                 "lawyers" => !admin && Id("id")==user.LawyerProfileId,
                 "signatures" => !admin && node?["signerName"]?.GetValue<string>() == user.FullName,
@@ -208,7 +237,7 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
                 foreach (var property in obj.ToList()) Clean(property.Value, property.Key);
             }
         }
-        Clean(json, area == "payments" ? "slips" : area);
+        Clean(json, area == "cases" && path.EndsWith("/hearings") ? "appointments" : area == "payments" ? "slips" : area);
         if (area == "dashboard" && json is JsonObject dashboard)
         {
             dashboard["totalCases"] = cases.Count;

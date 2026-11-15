@@ -24,8 +24,10 @@ window.App = {
         currentDoc: null,
         currentClauses: [],
         pendingUploadBase64: '',
+        pendingUploadFile: null,
         pendingUploadMimeType: 'application/pdf',
         pendingSlipBase64: '',
+        pendingSlipFile: null,
         rawUploadedSigImage: null,
         batchPrintSigningMode: 'DOC_DEFAULT',
         imageZoomScale: 1,
@@ -285,6 +287,25 @@ window.App = {
     },
 
     // แยกแอคเคาท์ทนายความ: ทนายแต่ละคนจะเห็นเฉพาะคดีของตนเองเท่านั้น (ส่วนแอดมินไม่สามารถดูข้อมูลสำนวนคดีของทนายได้)
+    toForm9LawyerProfile(profile) {
+        if (!profile) return null;
+        return {
+            fullName: profile.fullName || '',
+            licenseNo: profile.licenseNo || '',
+            licenseJurisdiction: profile.licenseJurisdiction || '',
+            citizenId: profile.citizenId || '',
+            houseNo: profile.houseNo || '',
+            moo: profile.moo || '',
+            road: profile.road || '',
+            soi: profile.soi || '',
+            subDistrict: profile.subDistrict || '',
+            district: profile.district || '',
+            province: profile.province || '',
+            postalCode: profile.postalCode || '',
+            phone: profile.phone || ''
+        };
+    },
+
     getAccessibleCases() {
         const u = this.state.currentUser;
         if (!u) return [];
@@ -515,8 +536,8 @@ window.App = {
             cases: [`สำนวนคดีของ ${effectiveLawyer?.fullName || 'ทนายความ'} & มอบหมายเสมียนรับผิดชอบคดี`, 'แสดงเฉพาะสำนวนคดีที่ทนายความท่านนี้เป็นเจ้าของ พร้อมเพิ่ม/เลือกเสมียนทนายผู้รับผิดชอบแต่ละคดี'],
             studio: ['สตูดิโอร่างคำฟ้อง คำร้อง คำให้การ และแบบพิมพ์ศาล (A4 Live Studio)', 'นำข้อความคำร้องลงแบบฟอร์มศาล จัดบรรทัดไม่ฉีกตัวเลข/วันที่ และเลือกใช้ลายเซ็นอิเล็กทรอนิกส์หรือเว้นว่างเพื่อเซ็นจริง'],
             files: ['คลังไฟล์สำนวนคดีของฉัน & เอกสารอ้างอิงตามสารบัญแบบพิมพ์ศาล (แบบ ๑ – ๑๕)', 'จัดเก็บไฟล์ PDF, รูปภาพ, ลิงก์ไฟล์ และแบบพิมพ์ศาลของสำนวนตนเอง พร้อมป๊อบอัพเปิดอ่าน PDF/รูปภาพ'],
-            procedure: ['แผนผังวิธีพิจารณาความอาญา (ป.วิ.อ.) และวิธีพิจารณาความแพ่ง (ป.วิ.พ.)', 'เลือกสร้างเอกสารคำคู่ความตามขั้นตอนการดำเนินคดีของทนายโจทก์และทนายจำเลย'],
-            esign: ['ระบบลายเซ็นอิเล็กทรอนิกส์ & อัปโหลดไฟล์ภาพลายเซ็นพร้อมลบพื้นหลังอัตโนมัติ', 'วาดลายเซ็น หรืออัปโหลดไฟล์ภาพลายเซ็นพร้อมลบพื้นหลังกระดาษสีขาวออกให้อัตโนมัติ'],
+            procedure: ['แผนผังวิธีพิจารณาคดี อาญา · แพ่ง · ทุจริตฯ · ปกครอง', 'ขั้นตอน เอกสาร และวันนัด แยกตามประเภทศาล'],
+            esign: ['โปรไฟล์ทนาย & ลายเซ็นอิเล็กทรอนิกส์', 'จัดเก็บข้อมูลทนายและที่อยู่สำหรับเติมแบบพิมพ์ศาล พร้อมวาดหรืออัปโหลดลายเซ็น'],
             printcenter: ['ศูนย์พิมพ์แบบฟอร์มศาลครบชุด (Batch Print & Export)', 'พิมพ์ชุดคำฟ้องหรือชุดคำให้การทั้งสำนวน พร้อมตัวเลือกพิมพ์ลายเซ็นอิเล็กทรอนิกส์ หรือเว้นว่างไว้เซ็นจริง'],
             subscription: ['ระบบสมาชิกทนายความ ทดลองใช้ฟรี ๓ คดี & ซื้อโควต้าคดี / แจ้งสลิปโอนเงิน', 'เลือกแพ็กเกจรายเดือน รายปี หรือซื้อโควต้าจำนวนคดี พร้อมจัดการเสมียนทนายในสังกัด'],
             reports: isAdmin
@@ -542,6 +563,8 @@ window.App = {
             this.renderSubscriptionView();
         } else if (tabName === 'backoffice') {
             this.renderBackofficeView();
+        } else if (tabName === 'esign') {
+            this.loadLawyerProfileSettings();
         }
 
         document.getElementById('sidebar')?.classList.remove('open');
@@ -579,6 +602,61 @@ window.App = {
         this.renderReportsView();
         this.renderBackofficeView();
         if (window.lucide) lucide.createIcons();
+    },
+
+    async loadLawyerProfileSettings() {
+        try {
+            const profileId = Number(this.state.currentUser?.lawyerProfileId || 0);
+            if (!profileId) throw new Error('ไม่พบบัญชีโปรไฟล์ทนายความ');
+
+            const response = await fetch('/api/lawyers');
+            if (!response.ok) throw new Error(`โหลดโปรไฟล์ไม่สำเร็จ (HTTP ${response.status})`);
+            const profiles = await response.json();
+            const profile = profiles.find(p => Number(p.id) === profileId);
+            if (!profile) throw new Error('ไม่พบข้อมูลโปรไฟล์ทนายความ');
+
+            this.state.lawyerProfile = profile;
+            document.querySelectorAll('#lawyerProfileSettings [data-lawyer-profile-field]').forEach(input => {
+                input.value = profile[input.dataset.lawyerProfileField] ?? '';
+            });
+        } catch (error) {
+            console.error('โหลดโปรไฟล์ทนายไม่สำเร็จ', error);
+            this.showToast(error.message || 'โหลดโปรไฟล์ทนายไม่สำเร็จ');
+        }
+    },
+
+    async saveLawyerProfileSettings() {
+        try {
+            const profileId = Number(this.state.currentUser?.lawyerProfileId || 0);
+            if (!profileId) throw new Error('ไม่พบบัญชีโปรไฟล์ทนายความ');
+            const payload = { ...(this.state.lawyerProfile || {}) };
+            document.querySelectorAll('#lawyerProfileSettings [data-lawyer-profile-field]').forEach(input => {
+                payload[input.dataset.lawyerProfileField] = input.value.trim();
+            });
+
+            const response = await fetch(`/api/lawyers/${profileId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error(`บันทึกโปรไฟล์ไม่สำเร็จ (HTTP ${response.status})`);
+
+            const profile = await response.json();
+            this.state.lawyerProfile = profile;
+            const profileIndex = this.state.lawyers.findIndex(p => Number(p.id) === profileId);
+            if (profileIndex >= 0) this.state.lawyers[profileIndex] = profile;
+            this.state.users.filter(u => Number(u.lawyerProfileId) === profileId).forEach(user => {
+                user.fullName = profile.fullName;
+                user.licenseNo = profile.licenseNo;
+                user.citizenId = profile.citizenId;
+                user.phone = profile.phone;
+                user.officeName = profile.officeName;
+            });
+            this.showToast('บันทึกโปรไฟล์ทนายและที่อยู่เรียบร้อยแล้ว');
+        } catch (error) {
+            console.error('บันทึกโปรไฟล์ทนายไม่สำเร็จ', error);
+            this.showToast(error.message || 'บันทึกโปรไฟล์ทนายไม่สำเร็จ');
+        }
     },
 
     // ==================== 1. DASHBOARD VIEW (เฉพาะคดีของทนายความเจ้าของบัญชี) ====================
@@ -986,7 +1064,29 @@ window.App = {
         const effectiveLawyer = this.state.currentUser;
         if (!lawCase || !effectiveLawyer || effectiveLawyer.role === 'Admin') return this.showToast('กรุณาเลือกคดีที่มีสิทธิ์ก่อน');
         const defaultLawyer = this.state.lawyers.find(l => l.id === effectiveLawyer?.lawyerProfileId);
+        const caseLawyer = this.state.lawyers.find(l => Number(l.id) === Number(lawCase.primaryLawyerId));
         const clerk = effectiveLawyer?.role === 'Clerk' ? defaultLawyer : null;
+        const isAppointmentForm9 = tpl.formCode === '(๙)';
+        const emptyRequesterFields = isAppointmentForm9 ? {
+            requesterFullName: '',
+            requesterStatus: '',
+            requesterCitizenId: '',
+            requesterOccupation: '',
+            requesterAge: '',
+            requesterHouseNo: '',
+            requesterMoo: '',
+            requesterRoad: '',
+            requesterSoi: '',
+            requesterNearBy: '',
+            requesterSubDistrict: '',
+            requesterDistrict: '',
+            requesterProvince: '',
+            requesterPostalCode: '',
+            requesterPhone: ''
+        } : {};
+        const form9Extra = isAppointmentForm9
+            ? { Form9Lawyer: this.toForm9LawyerProfile(caseLawyer) || {} }
+            : {};
 
         let defaultClauses = [];
         try { defaultClauses = JSON.parse(tpl.defaultClausesJson || '[]'); } catch { defaultClauses = []; }
@@ -1003,12 +1103,12 @@ window.App = {
             templateId: tpl.id,
             formCode: tpl.formCode,
             documentTitle: tpl.defaultHeaderTitle || tpl.formName,
-            lawyerRoleInDoc: lawCase?.lawyerRole || 'ทนายโจทก์',
+            lawyerRoleInDoc: lawCase?.representingPartyOrder ? 'ทนาย'+lawCase.representingPartyOrder : lawCase?.lawyerRole || 'ทนายโจทก์',
             docDay: '๑๔',
             docMonth: 'พฤศจิกายน',
             docYear: '๖๙',
             requesterFullName: defaultLawyer?.fullName || '',
-            requesterStatus: lawCase?.lawyerRole || 'ทนายความ',
+            requesterStatus: lawCase?.representingPartyOrder ? 'ทนาย'+lawCase.representingPartyOrder : lawCase?.lawyerRole || 'ทนายความ',
             requesterCitizenId: defaultLawyer?.citizenId || '',
             requesterRace: 'ไทย',
             requesterNationality: 'ไทย',
@@ -1025,18 +1125,19 @@ window.App = {
             requesterPostalCode: defaultLawyer?.postalCode || '๓๓๐๐๐',
             requesterPhone: defaultLawyer?.phone || '-',
             clausesJson: JSON.stringify(defaultClauses),
-            extraFieldsJson: '{}',
+            extraFieldsJson: JSON.stringify(form9Extra),
             closingPrayer: tpl.formCode === '(๔)' ? 'ควรมิควรแล้วแต่จะโปรด' : window.CourtRenderer.normalizeClosingPrayer(tpl.defaultClosingText),
-            signerName: defaultLawyer?.fullName || '',
-            signerRole: lawCase?.lawyerRole || 'ทนายความ',
-            drafterName: defaultLawyer?.fullName || '',
+            signerName: isAppointmentForm9 ? '' : defaultLawyer?.fullName || '',
+            signerRole: isAppointmentForm9 ? '' : lawCase?.representingPartyOrder ? 'ทนาย'+lawCase.representingPartyOrder : lawCase?.lawyerRole || 'ทนายความ',
+            drafterName: isAppointmentForm9 ? caseLawyer?.fullName || defaultLawyer?.fullName || '' : defaultLawyer?.fullName || '',
             typistName: clerk?.fullName || '',
-            signatureImageBase64: defaultLawyer?.signatureDataUrl || '',
-            drafterSignatureBase64: defaultLawyer?.signatureDataUrl || '',
+            signatureImageBase64: isAppointmentForm9 ? '' : defaultLawyer?.signatureDataUrl || '',
+            drafterSignatureBase64: isAppointmentForm9 ? caseLawyer?.signatureDataUrl || '' : defaultLawyer?.signatureDataUrl || '',
             typistSignatureBase64: clerk?.signatureDataUrl || '',
             useThaiNumerals: true,
             status: 'ร่าง'
         };
+        Object.assign(newDoc, emptyRequesterFields);
 
         this.loadDocumentIntoEditorState(newDoc);
         this.switchTab('studio');
@@ -1073,6 +1174,10 @@ window.App = {
         };
 
         setVal('edFormCode', doc.formCode || '(๗)');
+        const isDefenseForm = ['(๑๑)', '(๑๑ ก.)'].includes(doc.formCode);
+        const legacyTextStyle = this.state.currentClauses.find(c => c.FontFamily || c.FontSize) || {};
+        setVal('edClauseTextFontFamily', extra.TextFontFamily || legacyTextStyle.FontFamily || (isDefenseForm ? 'th-sarabun-new' : 'sarabun'));
+        setVal('edClauseTextFontSize', extra.TextFontSize || legacyTextStyle.FontSize || (isDefenseForm ? 16 : 14));
         setVal('edDocumentTitle', doc.documentTitle || '');
         setVal('edDocDay', doc.docDay || '');
         setVal('edDocMonth', doc.docMonth || '');
@@ -1201,11 +1306,41 @@ window.App = {
         this.syncEditorToPreview();
     },
 
+    getStudioTextSettings(isDefenseForm = false) {
+        const families = {
+            'th-sarabun-new': "'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', sans-serif",
+            sarabun: "'Sarabun', 'TH Sarabun New', sans-serif",
+            'angsana-new': "'Angsana New', 'AngsanaUPC', serif",
+            'cordia-new': "'Cordia New', 'CordiaUPC', sans-serif"
+        };
+        const allowedSizes = [12, 14, 16, 18];
+        const selectedFont = document.getElementById('edClauseTextFontFamily')?.value;
+        const selectedSize = document.getElementById('edClauseTextFontSize')?.value;
+        const fontFamily = families[selectedFont] ? selectedFont : (isDefenseForm ? 'th-sarabun-new' : 'sarabun');
+        const requestedSize = Number(selectedSize || (isDefenseForm ? 16 : 14));
+        const sizePt = allowedSizes.includes(requestedSize) ? requestedSize : (isDefenseForm ? 16 : 14);
+        return { fontFamily, cssFamily: families[fontFamily], sizePt, weight: isDefenseForm ? 300 : 400 };
+    },
+
+    updateClauseTextStyle() {
+        const isDefenseForm = ['(๑๑)', '(๑๑ ก.)'].includes(document.getElementById('edFormCode')?.value);
+        const settings = this.getStudioTextSettings(isDefenseForm);
+        document.querySelectorAll('#clausesEditorList .clause-content-editor').forEach(textarea => {
+            textarea.style.fontFamily = settings.cssFamily;
+            textarea.style.fontSize = `${settings.sizePt}pt`;
+            textarea.style.fontWeight = String(settings.weight);
+        });
+        this.syncEditorToPreview();
+    },
+
     renderClausesEditorList() {
+        const isDefenseForm = ['(๑๑)', '(๑๑ ก.)'].includes(document.getElementById('edFormCode')?.value);
         const listEl = document.getElementById('clausesEditorList');
         if (!listEl) return;
         const formCode = document.getElementById('edFormCode')?.value || '(๗)';
         const isTabular = formCode === '(๑๕)' || formCode === '(๓)' || formCode === '(๘)';
+        document.getElementById('clauseTextStyleControls')?.classList.remove('hidden');
+        const textSettings = this.getStudioTextSettings(isDefenseForm);
 
         const lbl = document.getElementById('clausesSectionLabel');
         if (lbl) {
@@ -1239,7 +1374,8 @@ window.App = {
                 </div>
             `).join('');
         } else {
-            listEl.innerHTML = this.state.currentClauses.map((c, idx) => `
+            listEl.innerHTML = this.state.currentClauses.map((c, idx) => {
+                return `
                 <div class="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                     <div class="flex items-center justify-between gap-2">
                         <input type="text" value="${(c.ClauseTitle || c.clauseTitle || `ข้อ ${idx + 1}.`).replace(/"/g, '&quot;')}"
@@ -1247,10 +1383,12 @@ window.App = {
                             class="w-28 px-2 py-1 rounded border border-slate-300 text-xs font-bold bg-white" />
                         <button type="button" onclick="App.removeClauseItem(${idx})" class="text-xs text-rose-600 hover:underline">ลบข้อนี้</button>
                     </div>
-                    <textarea rows="4" oninput="App.updateClauseField(${idx}, 'Content', this.value)"
-                        class="w-full p-2.5 rounded-lg border border-slate-300 text-xs bg-white leading-relaxed">${c.Content || c.content || ''}</textarea>
+                    <textarea id="clauseContent${idx}" rows="4" oninput="App.updateClauseField(${idx}, 'Content', this.value)"
+                        style="font-family:${textSettings.cssFamily};font-size:${textSettings.sizePt}pt;font-weight:${textSettings.weight};"
+                        class="clause-content-editor w-full p-2.5 rounded-lg border border-slate-300 text-xs bg-white leading-relaxed">${c.Content || c.content || ''}</textarea>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
     },
 
@@ -1415,6 +1553,10 @@ window.App = {
         extra.ShowMainElectronicSig = document.getElementById('edShowMainSigChk')?.checked !== false;
         extra.ShowDrafterElectronicSig = document.getElementById('edShowDrafterSigChk')?.checked !== false;
         extra.ShowTypistElectronicSig = document.getElementById('edShowTypistSigChk')?.checked !== false;
+        const isDefenseForm = ['(๑๑)', '(๑๑ ก.)'].includes(getVal('edFormCode'));
+        const textSettings = this.getStudioTextSettings(isDefenseForm);
+        extra.TextFontFamily = textSettings.fontFamily;
+        extra.TextFontSize = textSettings.sizePt;
 
         return {
             ...base,
@@ -2168,6 +2310,7 @@ window.App = {
         if (!container) return;
 
         const caseFilter = document.getElementById('filesFilterCaseSelect')?.value || 'ALL';
+        const canDeleteFiles = this.state.currentUser?.role === 'Lawyer';
         this.populateFormCodeDropdownWithStats('filesFilterFormCodeSelect', caseFilter, {
             includeAll: true,
             includeZero: true,
@@ -2252,9 +2395,10 @@ window.App = {
                                 <button onclick="App.openDocInStudio(${f.documentId})" class="px-2.5 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 font-semibold text-xs">
                                     ✏️ แก้ไขฟอร์ม
                                 </button>` : ''}
+                                ${canDeleteFiles ? `
                                 <button onclick="App.deleteCaseFileAttachment(${f.id})" class="px-2 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 text-xs font-semibold">
                                     ลบ
-                                </button>
+                                </button>` : ''}
                             </td>
                         </tr>`;
                     }).join('')}
@@ -2277,11 +2421,23 @@ window.App = {
     },
 
     async deleteCaseFileAttachment(fileId) {
-        const res = await fetch(`/api/files/${fileId}`, { method: 'DELETE' });
-        if (res.ok) {
+        if (this.state.currentUser?.role !== 'Lawyer') {
+            this.showToast('เฉพาะทนายเจ้าของสำนวนเท่านั้นที่ลบไฟล์ได้');
+            return;
+        }
+        if (!window.confirm('ลบไฟล์นี้ถาวรและยกเลิกการแนบจากวันนัด แชทลูกความ และรายการขั้นตอนคดีหรือไม่? ข้อความและรายการคดีจะยังอยู่ แต่จะไม่มีไฟล์แนบ')) return;
+        try {
+            const res = await fetch(`/api/files/${fileId}?detachLinks=true`, { method: 'DELETE' });
+            if (!res.ok) {
+                const error = await res.json().catch(() => ({}));
+                this.showToast(error.message || `ลบไฟล์ไม่สำเร็จ (HTTP ${res.status})`);
+                return;
+            }
             await this.loadDashboardData();
             this.renderFilesDirectoryView();
             this.showToast('ลบรายการไฟล์ออกจากคลังสำนวนแล้ว');
+        } catch (error) {
+            this.showToast(`เชื่อมต่อระบบลบไฟล์ไม่สำเร็จ: ${error.message}`);
         }
     },
 
@@ -2475,6 +2631,7 @@ window.App = {
     openUploadFileModal(defaultType = 'PDF') {
         this.populateFilesFilterDropdowns();
         this.state.pendingUploadBase64 = '';
+        this.state.pendingUploadFile = null;
         const stSel = document.getElementById('upStorageType');
         if (stSel) {
             stSel.value = defaultType;
@@ -2503,6 +2660,8 @@ window.App = {
         if (titleInput && !titleInput.value) {
             titleInput.value = file.name;
         }
+        this.state.pendingUploadFile = file;
+        this.state.pendingUploadBase64 = '';
         this.state.pendingUploadMimeType = file.type || 'application/pdf';
         const stSel = document.getElementById('upStorageType');
         if (stSel) {
@@ -2523,7 +2682,7 @@ window.App = {
         const fileTitle = document.getElementById('upFileTitle')?.value?.trim() || `${formCode} ${meta.name}`;
         const fileStatus = document.getElementById('upFileStatus')?.value || 'ยื่นต่อศาลแล้ว';
         const pageCount = Number(document.getElementById('upPageCount')?.value || 1);
-        const fileUrl = document.getElementById('upFileUrl')?.value?.trim() || (storageType === 'PDF' && !this.state.pendingUploadBase64 ? '/api/files/stream-sample/form-07' : '');
+        const fileUrl = document.getElementById('upFileUrl')?.value?.trim() || (storageType === 'PDF' && !this.state.pendingUploadFile && !this.state.pendingUploadBase64 ? '/api/files/stream-sample/form-07' : '');
         const remark = document.getElementById('upRemark')?.value?.trim() || `อ้างอิงสารบัญแบบพิมพ์ศาล ${formCode} ${meta.name}`;
 
         const payload = {
@@ -2536,18 +2695,16 @@ window.App = {
             storageType,
             fileStatus,
             fileUrlOrPath: fileUrl,
-            fileDataBase64: this.state.pendingUploadBase64 || '',
             mimeType: this.state.pendingUploadMimeType,
             pageCount,
             uploadedBy: this.state.currentUser?.fullName || 'นายปิยะณัฐ วัชราภรณ์',
             remark
         };
 
-        const res = await fetch('/api/files', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        const body = new FormData();
+        for (const [key, value] of Object.entries(payload)) body.append(key, String(value ?? ''));
+        if (this.state.pendingUploadFile) body.append('file', this.state.pendingUploadFile, this.state.pendingUploadFile.name);
+        const res = await fetch('/api/files', { method: 'POST', body });
 
         if (res.ok) {
             this.closeUploadFileModal();
@@ -2711,7 +2868,8 @@ window.App = {
             title: `หลักฐานสลิปโอนเงิน #SLIP-${s.id} — ${s.userFullName}`,
             subtitle: `แพ็กเกจ: ${s.planName} (+${s.casesQuotaRequested} คดี) • ยอดโอน ${Number(s.amountBaht).toLocaleString()} บาท • สถานะ: ${s.status}`,
             storageType: 'IMAGE',
-            dataBase64: s.slipImageBase64
+            dataBase64: s.slipImageBase64,
+            url: s.slipImageUrl
         });
     },
 
@@ -2803,11 +2961,7 @@ window.App = {
     onSelectSlipImageFile(inputEl) {
         const file = inputEl.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = e => {
-            this.state.pendingSlipBase64 = e.target.result;
-        };
-        reader.readAsDataURL(file);
+        this.state.pendingSlipFile = file;
     },
 
     async submitPaymentSlip() {
@@ -2827,17 +2981,20 @@ window.App = {
             transferDateText: document.getElementById('slipDate')?.value || '14/11/2569',
             transferTimeText: document.getElementById('slipTime')?.value || '18:15',
             bankName: document.getElementById('slipBankName')?.value || 'ธนาคารกรุงไทย',
-            slipImageBase64: this.state.pendingSlipBase64 || '',
             referenceNote: document.getElementById('slipRefNote')?.value || ''
         };
 
+        const formData = new FormData();
+        for (const [key, value] of Object.entries(payload)) formData.append(key, String(value ?? ''));
+        if (this.state.pendingSlipFile) formData.append('file', this.state.pendingSlipFile, this.state.pendingSlipFile.name);
         const res = await fetch('/api/payments/slips', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: formData
         });
 
         if (res.ok) {
+            this.state.pendingSlipFile = null;
+            this.state.pendingSlipBase64 = '';
             this.closePaymentSlipModal();
             await this.loadDashboardData();
             this.renderAllViews();

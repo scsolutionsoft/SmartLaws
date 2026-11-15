@@ -5,10 +5,13 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton<DatabaseService>();
+builder.Services.AddSingleton<FileStorage>();
+builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = FileStorage.MaxRequestBytes);
 builder.Services.AddSingleton<WordExportService>();
 builder.Services.AddScoped<AccessControl>();
 builder.Services.AddSingleton<LoginAttemptLimiter>();
@@ -33,8 +36,8 @@ builder.Services.AddRateLimiter(options =>
         if (!http.Request.Path.StartsWithSegments("/api")) return RateLimitPartition.GetNoLimiter("static");
         var path=http.Request.Path.Value ?? "";
         var category=path.StartsWith("/api/auth/") ? "Auth" :
-            path=="/api/files" && HttpMethods.IsPost(http.Request.Method) ? "Uploads" :
-            path.EndsWith("/content") ? "Downloads" : path.EndsWith("/export-docx") ? "Exports" : "Requests";
+            FileStorage.IsUploadRequest(http.Request) && HttpMethods.IsPost(http.Request.Method) ? "Uploads" :
+            path.EndsWith("/content") || path.EndsWith("/backup") ? "Downloads" : path.EndsWith("/export-docx") ? "Exports" : "Requests";
         int defaultLimit=category switch { "Auth"=>16,"Uploads"=>8,"Downloads"=>24,"Exports"=>4,_=>96 };
         return RateLimitPartition.GetConcurrencyLimiter(category,_=>new ConcurrencyLimiterOptions {
             PermitLimit=builder.Configuration.GetValue($"Capacity:{category}Concurrency",defaultLimit),
@@ -51,6 +54,11 @@ var app = builder.Build();
 
 app.UseAuthentication();
 app.UseRateLimiter();
+app.Use(async (http, next) =>
+{
+    if (FileStorage.IsUploadRequest(http.Request)) FileStorage.SetRequestLimit(http);
+    await next();
+});
 app.Use(async (http, next) =>
 {
     if (http.Request.Path.StartsWithSegments("/api")) http.Response.Headers.CacheControl = "no-store";
@@ -70,6 +78,12 @@ using (var scope = app.Services.CreateScope())
     await AppointmentModule.InitializeAsync(db);
     await AppointmentFiles.InitializeAsync(db);
     await CapacitySupport.InitializeAsync(db);
+    await CommunityModule.InitializeAsync(db);
+    await IdentityDocuments.InitializeAsync(db);
+    await FileStorage.InitializeAsync(db);
+    await ClientPortal.InitializeAsync(db);
+    await LawyerArchive.InitializeAsync(db);
+    await CaseParties.InitializeAsync(db);
 }
 
 var api = app.MapGroup("/api").AddEndpointFilter<AccessControl>();
@@ -79,6 +93,12 @@ AppointmentFiles.Map(api);
 ProfileAutofill.Map(api);
 AccountManagement.Map(api);
 CapacitySupport.MapFiles(api);
+CommunityModule.Map(app, api);
+CaseArchive.Map(api);
+IdentityDocuments.Map(api);
+ClientPortal.Map(api);
+LawyerArchive.Map(api);
+CaseParties.Map(api);
 
 // ==================== API ENDPOINTS ====================
 
@@ -126,6 +146,12 @@ api.MapPost("/cases", async (HttpContext http, LawCase model, DatabaseService db
         model.CaseCode = $"{prefix}-{DateTime.Now:yyMMdd-HHmm}";
     }
 
+    if (model.InitialParties != null) {
+        foreach(var p in model.InitialParties)p.CitizenId=ClientPortal.Digits(p.CitizenId);
+        var error=CaseParties.Validate(model.LawyerRole,CaseParties.Counts(model.PartyCountsJson),model.InitialParties);
+        if(error!=null)return Results.BadRequest(new{message=error});
+        model.RepresentingPartyOrder=CaseParties.Summary(model.InitialParties);
+    }
     var id = await conn.ExecuteScalarAsync<int>(@"
         INSERT INTO SL_LawCases (
             CaseCode, BlackCaseNo, BlackCaseYear, RedCaseNo, RedCaseYear, CourtName,
@@ -141,6 +167,12 @@ api.MapPost("/cases", async (HttpContext http, LawCase model, DatabaseService db
             @CurrentProceduralStage, @Status, @NextHearingDate, @NextHearingNote, @PrimaryLawyerId, @ClerkId, @CaseSummary
         );
     ", model, transaction);
+
+    if(model.InitialParties!=null){
+        foreach(var p in model.InitialParties){p.CaseId=id;p.Id=await CaseParties.Insert(conn,transaction,p);}
+        await conn.ExecuteAsync("UPDATE SL_LawCases SET PartyCountsJson=@PartyCountsJson,PartyVersion=1 WHERE Id=@id",new{id,model.PartyCountsJson},transaction);
+        model.PartyVersion=1;
+    }
 
     if (int.TryParse(userIdStr, out var uid) && uid > 0)
     {
@@ -159,6 +191,9 @@ api.MapPost("/cases", async (HttpContext http, LawCase model, DatabaseService db
 api.MapPut("/cases/{id:int}", async (int id, LawCase model, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
+    // Representation is managed by the roster, not by a stale general case-edit form.
+    var existing=await conn.QuerySingleAsync<LawCase>("SELECT * FROM SL_LawCases WHERE Id=@id",new{id});
+    if(existing.PartyVersion>0){model.LawyerRole=existing.LawyerRole;model.RepresentingPartyOrder=existing.RepresentingPartyOrder;}
     model.Id = id;
     await conn.ExecuteAsync(@"
         UPDATE SL_LawCases SET
@@ -169,8 +204,8 @@ api.MapPut("/cases/{id:int}", async (int id, LawCase model, DatabaseService db) 
             CourtName = @CourtName,
             CaseCategory = @CaseCategory,
             SubCategory = @SubCategory,
-            LawyerRole = @LawyerRole,
-            RepresentingPartyOrder = @RepresentingPartyOrder,
+            LawyerRole = CASE WHEN PartyVersion>0 THEN LawyerRole ELSE @LawyerRole END,
+            RepresentingPartyOrder = CASE WHEN PartyVersion>0 THEN RepresentingPartyOrder ELSE @RepresentingPartyOrder END,
             PlaintiffName = @PlaintiffName,
             DefendantName = @DefendantName,
             ChargeOrCauseOfAction = @ChargeOrCauseOfAction,
@@ -202,37 +237,18 @@ api.MapPut("/cases/{id:int}/clerk", async (int id, LawCase req, DatabaseService 
     return Results.Ok(updated);
 });
 
-api.MapDelete("/cases/{id:int}", async (int id, DatabaseService db) =>
-{
-    using var conn = db.CreateConnection();
-    await conn.OpenAsync();
-    using var tx = conn.BeginTransaction();
-    await conn.ExecuteAsync("DELETE FROM SL_Appointments WHERE CaseId=@Id; DELETE FROM SL_LitigationEvents WHERE CaseId=@Id; DELETE FROM SL_CaseFileAttachments WHERE CaseId=@Id; DELETE FROM SL_CaseDocuments WHERE CaseId = @Id; DELETE FROM SL_CaseParties WHERE CaseId = @Id; DELETE FROM SL_LawCases WHERE Id = @Id;", new { Id = id }, tx);
-    tx.Commit();
-    return Results.Ok(new { Deleted = true });
-});
-
 // 3. Case Parties CRUD
-api.MapPost("/parties", async (CaseParty party, DatabaseService db) =>
+api.MapPost("/parties", async (CaseParty party, HttpContext h, DatabaseService db) =>
 {
-    using var conn = db.CreateConnection();
-    var id = await conn.ExecuteScalarAsync<int>(@"
-        INSERT INTO SL_CaseParties (
-            CaseId, PartySide, PartyOrder, Title, FullName, CitizenId, Race, Nationality,
-            Occupation, Age, BirthDateText, HouseNo, Moo, Road, Soi, NearBy,
-            SubDistrict, District, Province, PostalCode, Phone, Fax, Email, IsOurClient
-        )
-        OUTPUT INSERTED.Id
-        VALUES (
-            @CaseId, @PartySide, @PartyOrder, @Title, @FullName, @CitizenId, @Race, @Nationality,
-            @Occupation, @Age, @BirthDateText, @HouseNo, @Moo, @Road, @Soi, @NearBy,
-            @SubDistrict, @District, @Province, @PostalCode, @Phone, @Fax, @Email, @IsOurClient
-        );
-    ", party);
-    party.Id = id;
-    return Results.Ok(party);
+    if(!ClientPortal.Owns(h,party.CaseId))return Results.NotFound();
+    using var conn=db.CreateConnection();await conn.OpenAsync();using var tx=conn.BeginTransaction(System.Data.IsolationLevel.Serializable);
+    var lc=await conn.QuerySingleAsync<LawCase>("SELECT * FROM SL_LawCases WITH(UPDLOCK,HOLDLOCK) WHERE Id=@CaseId",party,tx);
+    var rows=(await conn.QueryAsync<CaseParty>("SELECT * FROM SL_CaseParties WHERE CaseId=@CaseId",party,tx)).ToList();
+    party.CitizenId=ClientPortal.Digits(party.CitizenId);rows.Add(party);
+    var error=CaseParties.Validate(lc.LawyerRole,CaseParties.Counts(lc.PartyCountsJson),rows,false);
+    if(error!=null)return Results.BadRequest(new{message=error});
+    party.Id=await CaseParties.Insert(conn,tx,party);await CaseParties.Sync(conn,tx,party.CaseId);tx.Commit();return Results.Ok(party);
 });
-
 // 4. Court Form Templates
 api.MapGet("/templates", async (DatabaseService db) =>
 {
@@ -377,15 +393,25 @@ api.MapPost("/lawyers", async (LawyerProfile model, DatabaseService db) =>
 api.MapPut("/lawyers/{id:int}", async (int id, LawyerProfile model, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
+    await conn.OpenAsync();
     model.Id = id;
-    await conn.ExecuteAsync(@"
+    using var transaction = conn.BeginTransaction();
+    var updated = await conn.ExecuteAsync(@"
         UPDATE SL_LawyerProfiles SET
             FullName = @FullName, RoleType = @RoleType, LicenseNo = @LicenseNo, LicenseJurisdiction = @LicenseJurisdiction,
-            CitizenId = @CitizenId, Age = @Age, HouseNo = @HouseNo, Moo = @Moo, Road = @Road,
+            CitizenId = @CitizenId, Race = @Race, Nationality = @Nationality, Occupation = @Occupation, Age = @Age,
+            HouseNo = @HouseNo, Moo = @Moo, Road = @Road, Soi = @Soi, NearBy = @NearBy,
             SubDistrict = @SubDistrict, District = @District, Province = @Province, PostalCode = @PostalCode,
-            Phone = @Phone, OfficeName = @OfficeName, SignatureDataUrl = @SignatureDataUrl
+            Phone = @Phone, OfficeName = @OfficeName
         WHERE Id = @Id;
-    ", model);
+    ", model, transaction);
+    if (updated == 0) return Results.NotFound();
+    await conn.ExecuteAsync(@"
+        UPDATE SL_UserAccounts
+        SET FullName = @FullName, LicenseNo = @LicenseNo, CitizenId = @CitizenId, Phone = @Phone, OfficeName = @OfficeName
+        WHERE LawyerProfileId = @Id AND Role = N'Lawyer';
+    ", model, transaction);
+    transaction.Commit();
     return Results.Ok(model);
 });
 
@@ -456,7 +482,7 @@ api.MapPost("/auth/login", async (LoginRequest loginReq, HttpContext http, Datab
         await conn.ExecuteAsync("UPDATE SL_UserAccounts SET PasswordHash=@Hash WHERE Id=@Id", new { user.Id, Hash = AccountSecurity.Hash(loginReq.Password) });
     await AccountSecurity.SignIn(http, db, user);
     user.PasswordHash = "";
-    return Results.Ok(user);
+    return Results.Ok(user.Role == "Client" ? (object)new { user.Id, user.Username, user.FullName, user.Role } : user);
 }).RequireRateLimiting("auth");
 
 // ลงทะเบียนสมาชิกทนายความใหม่ รับสิทธิ์ทดลองใช้งานฟรี 3 คดีทันที
@@ -613,29 +639,87 @@ api.MapPut("/admin/plans/{id:int}", async (int id, SubscriptionPlan plan, Databa
 api.MapGet("/payments/slips", async (DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
-    return Results.Ok(await conn.QueryAsync<PaymentSlip>("SELECT * FROM SL_PaymentSlips ORDER BY Id DESC"));
+    return Results.Ok(await conn.QueryAsync<PaymentSlip>("SELECT *,CASE WHEN SlipStorageKey IS NOT NULL THEN CONCAT('/api/payments/slips/',Id,'/content') ELSE SlipImageBase64 END SlipImageUrl FROM SL_PaymentSlips ORDER BY Id DESC"));
 });
 
-api.MapPost("/payments/slips", async (PaymentSlip slip, DatabaseService db) =>
+api.MapPost("/payments/slips", async (HttpContext http, DatabaseService db, FileStorage storage) =>
 {
-    using var conn = db.CreateConnection();
-    if (string.IsNullOrWhiteSpace(slip.SlipImageBase64))
+    PaymentSlip slip;IFormFile? upload=null;
+    if(http.Request.HasFormContentType)
     {
-        slip.SlipImageBase64 = DatabaseService.GenerateSvgSlipPreviewDataUrl(
-            slip.UserFullName,
-            slip.PlanName,
-            slip.AmountBaht,
-            $"{slip.TransferDateText} {slip.TransferTimeText}",
-            $"SLIP-{DateTime.Now:yyMMddHHmm}");
+        var form=await FileStorage.ReadFormAsync(http);
+        decimal Amount()=>decimal.TryParse(form["amountBaht"],out var value)?value:0;
+        int Number(string name)=>int.TryParse(form[name],out var value)?value:0;
+        slip=new PaymentSlip{UserId=Number("userId"),PlanId=Number("planId"),AmountBaht=Amount(),
+            TransferDateText=form["transferDateText"].ToString(),TransferTimeText=form["transferTimeText"].ToString(),
+            BankName=form["bankName"].ToString(),ReferenceNote=form["referenceNote"].ToString(),
+            UserFullName=form["userFullName"].ToString(),PlanName=form["planName"].ToString(),
+            PlanCategory=form["planCategory"].ToString(),CasesQuotaRequested=Number("casesQuotaRequested")};
+        upload=form.Files.GetFile("file");
     }
-    slip.Status = "รอตรวจสอบ";
-    var id = await conn.ExecuteScalarAsync<int>(@"
-        INSERT INTO SL_PaymentSlips (UserId, UserFullName, PlanId, PlanName, PlanCategory, AmountBaht, CasesQuotaRequested, TransferDateText, TransferTimeText, BankName, SlipImageBase64, ReferenceNote, Status, AdminRemark)
-        OUTPUT INSERTED.Id
-        VALUES (@UserId, @UserFullName, @PlanId, @PlanName, @PlanCategory, @AmountBaht, @CasesQuotaRequested, @TransferDateText, @TransferTimeText, @BankName, @SlipImageBase64, @ReferenceNote, @Status, N'');
-    ", slip);
-    slip.Id = id;
-    return Results.Ok(slip);
+    else slip=await http.Request.ReadFromJsonAsync<PaymentSlip>(cancellationToken:http.RequestAborted)??new PaymentSlip();
+
+    var user=AccountSecurity.User(http);
+    if(user.Role!="Admin")
+    {
+        if(user.Role!="Lawyer")return Results.StatusCode(403);
+        using var planConnection=db.CreateConnection();
+        var plan=await planConnection.QuerySingleOrDefaultAsync<SubscriptionPlan>("SELECT * FROM SL_SubscriptionPlans WHERE Id=@PlanId AND IsActive=1",slip);
+        if(plan==null||slip.AmountBaht<0)return Results.BadRequest(new{message="กรุณาเลือกแพ็กเกจที่เปิดใช้งานและตรวจสอบยอดเงิน"});
+        slip.UserId=user.Id;slip.UserFullName=user.FullName;slip.Status="รอตรวจสอบ";slip.ReviewedBy="";slip.AdminRemark="";
+        slip.PlanName=plan.PlanName;slip.PlanCategory=plan.PlanCategory;slip.CasesQuotaRequested=plan.CasesQuotaIncluded;
+    }
+
+    if(upload==null&&!string.IsNullOrEmpty(slip.SlipImageBase64))
+    {
+        try
+        {
+            var raw=slip.SlipImageBase64.Contains(',')?slip.SlipImageBase64.Split(',',2)[1]:slip.SlipImageBase64;
+            var bytes=Convert.FromBase64String(raw);
+            if(bytes.Length>10*1024*1024)return Results.BadRequest(new{message="กรุณารีโหลดหน้าเว็บเพื่ออัปโหลดไฟล์ผ่านแบบฟอร์มใหม่"});
+            var mime=slip.SlipImageBase64.StartsWith("data:image/png",StringComparison.OrdinalIgnoreCase)?"image/png":"image/jpeg";
+            upload=new FormFile(new MemoryStream(bytes),0,bytes.Length,"file",mime=="image/png"?"slip.png":"slip.jpg"){Headers=new HeaderDictionary(),ContentType=mime};
+            slip.SlipImageBase64="";slip.SlipMimeType=upload.ContentType;
+        }
+        catch(FormatException){return Results.BadRequest(new{message="ข้อมูลภาพสลิปไม่ถูกต้อง"});}
+    }
+    if(upload!=null&&(upload.Length<=0||upload.Length>FileStorage.MaxFileBytes))
+        return Results.BadRequest(new{message="ภาพสลิปต้องมีขนาดมากกว่า 0 และไม่เกิน 1 GB"});
+
+    string? key=null;var committed=false;
+    try
+    {
+        if(upload!=null)
+        {
+            if(upload.ContentType is not ("image/png" or "image/jpeg"))return Results.BadRequest(new{message="รองรับเฉพาะภาพ PNG หรือ JPEG"});
+            await using var stream=upload.OpenReadStream();key=await storage.SaveAsync(stream,upload.Length,http.RequestAborted);
+            if(!await storage.IsValidDocumentAsync(key,upload.ContentType,upload.FileName,http.RequestAborted))
+                return Results.BadRequest(new{message="ภาพสลิป PNG หรือ JPEG ไม่ถูกต้อง"});
+            slip.SlipImageBase64="";
+        }
+        if(key==null&&string.IsNullOrWhiteSpace(slip.SlipImageBase64))
+            slip.SlipImageBase64=DatabaseService.GenerateSvgSlipPreviewDataUrl(slip.UserFullName,slip.PlanName,slip.AmountBaht,$"{slip.TransferDateText} {slip.TransferTimeText}",$"SLIP-{DateTime.Now:yyMMddHHmm}");
+        slip.SlipStorageKey=key;slip.Status="รอตรวจสอบ";
+        using var conn=db.CreateConnection();
+        slip.Id=await conn.ExecuteScalarAsync<int>("""
+            INSERT INTO SL_PaymentSlips (UserId,UserFullName,PlanId,PlanName,PlanCategory,AmountBaht,CasesQuotaRequested,
+                TransferDateText,TransferTimeText,BankName,SlipImageBase64,SlipStorageKey,SlipMimeType,ReferenceNote,Status,AdminRemark)
+            OUTPUT INSERTED.Id VALUES (@UserId,@UserFullName,@PlanId,@PlanName,@PlanCategory,@AmountBaht,@CasesQuotaRequested,
+                @TransferDateText,@TransferTimeText,@BankName,@SlipImageBase64,@SlipStorageKey,@SlipMimeType,@ReferenceNote,@Status,N'')
+            """,slip);
+        committed=true;
+        if(key!=null)slip.SlipImageUrl=$"/api/payments/slips/{slip.Id}/content";
+        slip.SlipStorageKey=null;
+        return Results.Ok(slip);
+    }
+    finally{if(!committed)storage.Delete(key);}
+});
+api.MapGet("/payments/slips/{id:int}/content",async(int id,HttpContext http,DatabaseService db,FileStorage storage)=>{
+    var user=AccountSecurity.User(http);using var conn=db.CreateConnection();
+    var slip=await conn.QuerySingleOrDefaultAsync<PaymentSlip>("SELECT UserId,SlipStorageKey,SlipMimeType FROM SL_PaymentSlips WHERE Id=@id",new{id});
+    if(slip?.SlipStorageKey is not string key||user.Role!="Admin"&&slip.UserId!=user.Id)return Results.NotFound();
+    try{return Results.File(storage.OpenRead(key),slip.SlipMimeType??"image/jpeg",enableRangeProcessing:true);}
+    catch(FileNotFoundException){return Results.NotFound();}
 });
 
 api.MapPost("/admin/slips/{id:int}/approve", async (int id, PaymentSlip? reviewReq, DatabaseService db) =>
@@ -714,26 +798,111 @@ api.MapGet("/files", async (int? caseId, HttpContext http, DatabaseService db) =
         $"SELECT {CapacitySupport.FileColumns} FROM SL_CaseFileAttachments f WHERE f.CaseId IN ({CapacitySupport.CaseScope}) AND (@caseId IS NULL OR f.CaseId=@caseId) ORDER BY f.CaseId,f.DirectoryIndexNo,f.Id DESC",
         parameters, cancellationToken:http.RequestAborted)));
 });
-api.MapPost("/files", async (CaseFileAttachment file, DatabaseService db) =>
+api.MapPost("/files", async (HttpContext http, DatabaseService db, FileStorage storage) =>
 {
-    using var conn = db.CreateConnection();
-    var id = await conn.ExecuteScalarAsync<int>(@"
-        INSERT INTO SL_CaseFileAttachments (
-            CaseId, DocumentId, DirectoryIndexNo, FormCode, DirectoryCategoryName,
-            FileTitle, StorageType, FileStatus, FileUrlOrPath, FileDataBase64,
-            MimeType, PageCount, UploadedBy, Remark, CourtLevel, JudgmentBlackCaseNo, JudgmentRedCaseNo, JudgmentDate
-        )
-        OUTPUT INSERTED.Id
-        VALUES (
-            @CaseId, @DocumentId, @DirectoryIndexNo, @FormCode, @DirectoryCategoryName,
-            @FileTitle, @StorageType, @FileStatus, @FileUrlOrPath, @FileDataBase64,
-            @MimeType, @PageCount, @UploadedBy, @Remark, @CourtLevel, @JudgmentBlackCaseNo, @JudgmentRedCaseNo, @JudgmentDate
-        );
-    ", file);
-    file.Id = id;
-    if (!string.IsNullOrEmpty(file.FileDataBase64)) file.FileUrlOrPath = $"/api/files/{id}/content";
-    file.FileDataBase64 = "";
-    return Results.Ok(file);
+    CaseFileAttachment file;
+    IFormFile? upload = null;
+    if (http.Request.HasFormContentType)
+    {
+        var form = await FileStorage.ReadFormAsync(http);
+        int Number(string name, int fallback = 0) => int.TryParse(form[name], out var value) ? value : fallback;
+        DateTime? Date(string name) => DateTime.TryParse(form[name], out var value) ? value : null;
+        var documentId=Number("documentId");
+        file = new CaseFileAttachment {
+            CaseId=Number("caseId"), DocumentId=documentId>0?documentId:null,
+            DirectoryIndexNo=Number("directoryIndexNo",1), FormCode=form["formCode"].ToString(),
+            DirectoryCategoryName=form["directoryCategoryName"].ToString(), FileTitle=form["fileTitle"].ToString(),
+            StorageType=form["storageType"].ToString(), FileStatus=form["fileStatus"].ToString(),
+            FileUrlOrPath=form["fileUrlOrPath"].ToString(), MimeType=form["mimeType"].ToString(),
+            PageCount=Number("pageCount",1), Remark=form["remark"].ToString(), CourtLevel=form["courtLevel"].ToString(),
+            JudgmentBlackCaseNo=form["judgmentBlackCaseNo"].ToString(), JudgmentRedCaseNo=form["judgmentRedCaseNo"].ToString(),
+            JudgmentDate=Date("judgmentDate")
+        };
+        upload=form.Files.GetFile("file");
+    }
+    else
+    {
+        file = await http.Request.ReadFromJsonAsync<CaseFileAttachment>(cancellationToken:http.RequestAborted)
+            ?? new CaseFileAttachment();
+        if (!string.IsNullOrEmpty(file.FileDataBase64))
+        {
+            try
+            {
+                var raw=file.FileDataBase64.Contains(',')?file.FileDataBase64.Split(',',2)[1]:file.FileDataBase64;
+                var bytes=Convert.FromBase64String(raw);
+                if(bytes.Length>10*1024*1024)return Results.BadRequest(new{message="อัปโหลดไฟล์ขนาดใหญ่ผ่านแบบฟอร์มใหม่ กรุณารีโหลดหน้าเว็บ"});
+                var extension=file.MimeType=="application/pdf"?".pdf":file.MimeType=="image/png"?".png":".jpg";
+                upload=new FormFile(new MemoryStream(bytes),0,bytes.Length,"file",Path.HasExtension(file.FileTitle)?file.FileTitle:file.FileTitle+extension){Headers=new HeaderDictionary(),ContentType=file.MimeType};
+            }
+            catch(FormatException){return Results.BadRequest(new{message="ข้อมูลไฟล์ไม่ถูกต้อง"});}
+        }
+    }
+
+    var caseIds=(HashSet<int>)http.Items["caseIds"]!;
+    if(file.CaseId<=0||!caseIds.Contains(file.CaseId))return Results.NotFound();
+    if(string.IsNullOrWhiteSpace(file.FileTitle)||file.FileTitle.Length>300||
+       !new[]{"PDF","IMAGE","LINK","COURT_FORM"}.Contains(file.StorageType)||file.PageCount<1)
+        return Results.BadRequest(new{message="ประเภทไฟล์หรือข้อมูลเอกสารไม่ถูกต้อง"});
+    if(file.StorageType=="LINK"&&(!Uri.TryCreate(file.FileUrlOrPath,UriKind.Absolute,out var link)||link.Scheme!="https"))
+        return Results.BadRequest(new{message="ลิงก์ต้องเป็น HTTPS"});
+    if(file.StorageType is "PDF" or "IMAGE" && upload==null)
+        return Results.BadRequest(new{message="กรุณาเลือกไฟล์ก่อนบันทึก"});
+    if(file.DocumentId is >0)
+    {
+        using var check=db.CreateConnection();
+        if(await check.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_CaseDocuments WHERE Id=@DocumentId AND CaseId=@CaseId",file)==0)
+            return Results.BadRequest(new{message="เอกสารต้องอยู่ในสำนวนเดียวกัน"});
+    }
+    if(!string.IsNullOrEmpty(file.CourtLevel)&&
+       (!new[]{"ศาลชั้นต้น","ศาลอุทธรณ์","ศาลฎีกา"}.Contains(file.CourtLevel)||file.StorageType!="PDF"||
+        file.MimeType!="application/pdf"||string.IsNullOrWhiteSpace(file.JudgmentBlackCaseNo)||
+        string.IsNullOrWhiteSpace(file.JudgmentRedCaseNo)||file.JudgmentDate==null))
+        return Results.BadRequest(new{message="ระบุชั้นศาล เลขคดีดำ เลขคดีแดง วันที่คำพิพากษา และไฟล์ PDF ให้ครบ"});
+    file.UploadedBy=AccountSecurity.User(http).FullName;
+
+    string? storageKey=null;
+    if(upload!=null)
+    {
+        if(upload.Length<=0||upload.Length>FileStorage.MaxFileBytes)
+            return Results.BadRequest(new{message="ไฟล์ต้องมีขนาดมากกว่า 0 และไม่เกิน 1 GB"});
+        await using var input=upload.OpenReadStream();
+        storageKey=await storage.SaveAsync(input,upload.Length,http.RequestAborted);
+        if(!await storage.IsValidDocumentAsync(storageKey,file.MimeType,upload.FileName,http.RequestAborted))
+        {
+            storage.Delete(storageKey);
+            return Results.BadRequest(new{message="รองรับเฉพาะไฟล์ PDF, PNG และ JPEG ที่ถูกต้อง"});
+        }
+        file.StorageKey=storageKey;
+        file.FileDataBase64="";
+    }
+
+    var committed=false;
+    try
+    {
+        using var conn=db.CreateConnection();
+        await conn.OpenAsync(http.RequestAborted);
+        using var transaction=conn.BeginTransaction();
+        file.Id=await conn.ExecuteScalarAsync<int>("""
+            INSERT INTO SL_CaseFileAttachments (
+                CaseId,DocumentId,DirectoryIndexNo,FormCode,DirectoryCategoryName,FileTitle,StorageType,FileStatus,
+                FileUrlOrPath,FileDataBase64,StorageKey,MimeType,PageCount,UploadedBy,Remark,CourtLevel,
+                JudgmentBlackCaseNo,JudgmentRedCaseNo,JudgmentDate)
+            OUTPUT INSERTED.Id
+            VALUES (@CaseId,@DocumentId,@DirectoryIndexNo,@FormCode,@DirectoryCategoryName,@FileTitle,@StorageType,@FileStatus,
+                @FileUrlOrPath,@FileDataBase64,@StorageKey,@MimeType,@PageCount,@UploadedBy,@Remark,@CourtLevel,
+                @JudgmentBlackCaseNo,@JudgmentRedCaseNo,@JudgmentDate)
+            """,file,transaction);
+        transaction.Commit();
+        committed=true;
+        if(storageKey!=null)file.FileUrlOrPath=$"/api/files/{file.Id}/content";
+        file.FileDataBase64="";
+        file.StorageKey=null;
+        return Results.Ok(file);
+    }
+    finally
+    {
+        if(!committed)storage.Delete(storageKey);
+    }
 });
 
 api.MapPut("/files/{id:int}/status", async (int id, CaseFileAttachment req, DatabaseService db) =>
@@ -749,10 +918,29 @@ api.MapPut("/files/{id:int}/status", async (int id, CaseFileAttachment req, Data
     return Results.Ok(updated);
 });
 
-api.MapDelete("/files/{id:int}", async (int id, DatabaseService db) =>
+api.MapDelete("/files/{id:int}", async (int id, bool? detachLinks, DatabaseService db, FileStorage storage) =>
 {
     using var conn = db.CreateConnection();
-    await conn.ExecuteAsync("DELETE FROM SL_CaseFileAttachments WHERE Id = @Id", new { Id = id });
+    await conn.OpenAsync();
+    using var transaction = conn.BeginTransaction(System.Data.IsolationLevel.Serializable);
+    var file = await conn.QuerySingleOrDefaultAsync<CaseFileAttachment>(
+        "SELECT Id,StorageKey FROM SL_CaseFileAttachments WITH (UPDLOCK,HOLDLOCK) WHERE Id=@Id",
+        new { Id = id }, transaction);
+    if (file == null) return Results.NotFound();
+    if (detachLinks is true)
+    {
+        await conn.ExecuteAsync("""
+            DELETE FROM SL_AppointmentFiles WHERE FileId=@Id;
+            UPDATE SL_ClientChat SET FileId=NULL WHERE FileId=@Id;
+            UPDATE SL_LitigationEvents SET AttachmentId=NULL WHERE AttachmentId=@Id;
+            DELETE FROM SL_ClientShares WHERE FileId=@Id;
+            DELETE FROM SL_ClientDocuments WHERE FileId=@Id;
+            """, new { Id = id }, transaction);
+    }
+    if (await conn.ExecuteAsync("DELETE FROM SL_CaseFileAttachments WHERE Id = @Id", new { Id = id }, transaction) != 1)
+        return Results.NotFound();
+    transaction.Commit();
+    storage.Delete(file.StorageKey);
     return Results.Ok(new { Deleted = true });
 });
 

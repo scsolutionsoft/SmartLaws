@@ -1,0 +1,56 @@
+﻿SmartLaws — IIS Windows x64
+
+แพ็กเกจ Release / net10.0 / win-x64 / framework-dependent
+
+รุ่นปรับปรุงเป้าหมาย 800 บัญชี / 200 ผู้ใช้พร้อมกัน:
+อ่าน CAPACITY.md และ capacity-800-200.json สำหรับผลทดสอบจริงและข้อจำกัด
+ค่า connection pool และคิวงานอยู่ใน appsettings.Production.json
+สำหรับเป้าหมายนี้ให้ใช้ IIS บน Windows Server; IIS บน Windows 10/11 มีข้อจำกัดคำขอพร้อมกัน
+ผลทดสอบในแพ็กเกจเป็น Kestrel บนเครื่องพัฒนา ยังไม่ใช่ผลทดสอบ IIS ปลายทาง
+
+1. เปิดใช้งาน IIS และติดตั้ง .NET 10 Hosting Bundle เพื่อให้มี ASP.NET Core Module V2
+   แพ็กเกจนี้ไม่รวม runtime ต้องมี Microsoft.NETCore.App 10.x และ Microsoft.AspNetCore.App 10.x แบบ x64 บนเครื่องปลายทาง พร้อม ASP.NET Core Module V2 สำหรับ IIS; .NET 8 หรือ .NET Framework อย่างเดียวใช้ไม่ได้
+   หากติดตั้ง Hosting Bundle ก่อนเปิด IIS ให้ Repair Hosting Bundle แล้ว restart IIS
+   คู่มือ: https://learn.microsoft.com/aspnet/core/host-and-deploy/iis/?view=aspnetcore-10.0
+
+2. แตก ZIP ลงโฟลเดอร์เว็บไซต์ เช่น C:\inetpub\SmartLaws
+   ให้ web.config, SmartLaws.Web.exe และ wwwroot อยู่ที่ระดับรากของเว็บไซต์
+   หากอัปเดตเว็บเดิม ให้สำรองไฟล์ตั้งค่าและฐานข้อมูล แล้วหยุด App Pool ก่อนคัดลอกไฟล์
+
+3. ตั้งค่า SQL Server ใน appsettings.json > ConnectionStrings > DefaultConnection
+   ค่า SQL_SERVER / DATABASE_NAME / SQL_LOGIN / CHANGE_ME เป็นตัวอย่าง ต้องแก้ก่อนเริ่มระบบ
+   หรือกำหนด environment variable ConnectionStrings__DefaultConnection บนเซิร์ฟเวอร์
+   ต้องมีฐานข้อมูลอยู่แล้ว บัญชีเชื่อมต่อต้องมีสิทธิ์อ่าน/เขียนและสร้าง/ปรับโครงสร้างตาราง
+   โปรแกรมสร้าง/ปรับตารางและ seed ข้อมูลเมื่อเริ่มระบบตามพฤติกรรมเดิม
+   หากต้องการข้อมูลคดีและไฟล์เดิม ให้ backup/restore ฐานข้อมูล SQL Server เดิมมาด้วย
+   ZIP นี้ไม่มีฐานข้อมูลหรือไฟล์ที่จัดเก็บใน App_Data\Uploads
+   หากใช้ Windows authentication ต้องให้สิทธิ์ SQL Server แก่ identity ของ App Pool
+
+4. สร้าง App Pool แยกสำหรับ SmartLaws:
+   .NET CLR Version = No Managed Code
+   Managed pipeline mode = Integrated
+   Enable 32-Bit Applications = False
+   Load User Profile = True
+   ให้ App Pool identity มีสิทธิ์ Read & Execute ในโฟลเดอร์เว็บไซต์
+   สร้าง App_Data\Uploads และให้ App Pool identity มีสิทธิ์ Modify เฉพาะโฟลเดอร์นี้
+
+5. สร้าง IIS Website ให้ชี้มาที่โฟลเดอร์ในข้อ 2 ใช้ App Pool ในข้อ 4
+   ติดตั้งเป็นเว็บไซต์ที่ URL root (เช่น https://laws.example.com/)
+   JavaScript ใช้ /api และ /js จึงไม่ควรติดตั้งใต้ virtual subfolder
+   เปิด Anonymous Authentication สำหรับหน้า login และให้แอปจัดการการเข้าสู่ระบบ
+   ตั้งค่า HTTPS binding พร้อมใบรับรอง แล้วเริ่มเว็บไซต์
+
+6. เปิด /login.html และทดสอบเข้าสู่ระบบ เปิดคดี อัปโหลด PDF และดาวน์โหลดกลับ
+   ถ้าใช้ฐานข้อมูลใหม่ ให้เปลี่ยนรหัสผ่านบัญชีตัวอย่างก่อนเปิดให้ใช้งานจริง
+   รองรับไฟล์ PDF/PNG/JPG สูงสุด 1 GB ต่อไฟล์ อัปโหลดแบบสตรีมและเก็บใน App_Data\Uploads
+   สำรอง App_Data\Uploads ควบคู่กับ SQL Server และเผื่อพื้นที่ดิสก์ทั้งโฟลเดอร์อัปโหลดและโฟลเดอร์ชั่วคราวที่ ASP.NET ใช้รับ multipart
+
+ปัญหาการเริ่มต้น: ตรวจสอบ Event Viewer > Windows Logs > Application
+หากเปิด stdoutLogEnabled ใน web.config ชั่วคราว ให้สร้างโฟลเดอร์ logs และให้สิทธิ์เขียน
+แก่ App Pool identity แล้วปิด logging กลับหลังตรวจสอบเสร็จ
+
+แพ็กเกจนี้ยังไม่ได้ติดตั้งหรือทดสอบบน IIS เซิร์ฟเวอร์ปลายทาง
+
+Lawyer archives: IIS request filtering permits restore ZIPs up to 2 GiB. Preserve the App Pool identity and its Data Protection key store when updating or moving the site; signed archives require the original keys. Back up keys, App_Data\Uploads and SQL data together.
+Build: dotnet publish SmartLaws.Web.csproj -p:PublishProfile=IIS-x64
+Package: powershell -File scripts/package-iis.ps1

@@ -7,6 +7,7 @@ public class CaseAppointment
     public int Id { get; set; }
     public int CaseId { get; set; }
     public string Title { get; set; } = "";
+    public string CourtLevel { get; set; } = "";
     public string Kind { get; set; } = "นัดศาล";
     public DateTimeOffset StartsAt { get; set; }
     public DateTimeOffset EndsAt { get; set; }
@@ -36,12 +37,14 @@ public static class AppointmentModule
                 CreatedBy int NOT NULL, UpdatedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME());
             CREATE INDEX IX_Appointments_CaseDate ON SL_Appointments(CaseId,StartsAt) INCLUDE(EndsAt,Status,ReminderMinutes);
             END;
+            IF COL_LENGTH('SL_Appointments','CourtLevel') IS NULL ALTER TABLE SL_Appointments ADD CourtLevel nvarchar(100) NOT NULL DEFAULT N'';
             """);
     }
     private static bool Allowed(HttpContext h, int caseId) => AccountSecurity.User(h).Role != "Admin"
         && ((HashSet<int>)h.Items["caseIds"]!).Contains(caseId);
     private static string? Validate(CaseAppointment a)
     {
+        if (a.CourtLevel != "" && !new[] { "ศาลชั้นต้น", "ศาลอุทธรณ์", "ศาลฎีกา" }.Contains(a.CourtLevel)) return "ชั้นศาลไม่ถูกต้อง";
         if (string.IsNullOrWhiteSpace(a.Title) || a.Title.Length > 200 || a.Location == null || a.Location.Length > 300
             || a.Responsible == null || a.Responsible.Length > 200 || a.Notes == null || a.Notes.Length > 4000)
             return "กรุณาระบุชื่อนัด และตรวจสอบความยาวข้อมูล";
@@ -73,8 +76,8 @@ public static class AppointmentModule
             {
                 var p = new DynamicParameters(a); p.Add("actor", AccountSecurity.User(h).Id);
                 a.Id = await c.QuerySingleAsync<int>("""
-                    INSERT INTO SL_Appointments(CaseId,Title,Kind,StartsAt,EndsAt,Location,Responsible,Notes,Status,ReminderMinutes,CreatedBy)
-                    OUTPUT INSERTED.Id VALUES(@CaseId,@Title,@Kind,@StartsAt,@EndsAt,@Location,@Responsible,@Notes,@Status,@ReminderMinutes,@actor)
+                    INSERT INTO SL_Appointments(CaseId,Title,Kind,StartsAt,EndsAt,Location,Responsible,Notes,Status,ReminderMinutes,CourtLevel,CreatedBy)
+                    OUTPUT INSERTED.Id VALUES(@CaseId,@Title,@Kind,@StartsAt,@EndsAt,@Location,@Responsible,@Notes,@Status,@ReminderMinutes,@CourtLevel,@actor)
                     """, p, tx);
                 a.Version = 1;
             }
@@ -96,8 +99,8 @@ public static class AppointmentModule
             using var c = db.CreateConnection();
             var p = new DynamicParameters(a); p.Add("actor", AccountSecurity.User(h).Id);
             a.Id = await c.QuerySingleAsync<int>("""
-                INSERT INTO SL_Appointments(CaseId,Title,Kind,StartsAt,EndsAt,Location,Responsible,Notes,Status,ReminderMinutes,CreatedBy)
-                OUTPUT INSERTED.Id VALUES(@CaseId,@Title,@Kind,@StartsAt,@EndsAt,@Location,@Responsible,@Notes,@Status,@ReminderMinutes,@actor)
+                INSERT INTO SL_Appointments(CaseId,Title,Kind,StartsAt,EndsAt,Location,Responsible,Notes,Status,ReminderMinutes,CourtLevel,CreatedBy)
+                OUTPUT INSERTED.Id VALUES(@CaseId,@Title,@Kind,@StartsAt,@EndsAt,@Location,@Responsible,@Notes,@Status,@ReminderMinutes,@CourtLevel,@actor)
                 """, p);
             a.Version = 1;
             return Results.Ok(a);
@@ -112,7 +115,7 @@ public static class AppointmentModule
             a.Id = id;
             var count = await c.ExecuteAsync("""
                 UPDATE SL_Appointments SET CaseId=@CaseId,Title=@Title,Kind=@Kind,StartsAt=@StartsAt,EndsAt=@EndsAt,
-                Location=@Location,Responsible=@Responsible,Notes=@Notes,Status=@Status,ReminderMinutes=@ReminderMinutes,
+                CourtLevel=@CourtLevel,Location=@Location,Responsible=@Responsible,Notes=@Notes,Status=@Status,ReminderMinutes=@ReminderMinutes,
                 Version=Version+1,UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id AND Version=@Version
                 AND (CaseId=@CaseId OR NOT EXISTS(SELECT 1 FROM SL_AppointmentFiles WHERE AppointmentId=@Id))
                 """, a);
