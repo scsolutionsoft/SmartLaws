@@ -1,11 +1,47 @@
 using Dapper;
 using SmartLaws.Web.Models;
 using SmartLaws.Web.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton<DatabaseService>();
 builder.Services.AddSingleton<WordExportService>();
+builder.Services.AddScoped<AccessControl>();
+builder.Services.AddSingleton<LoginAttemptLimiter>();
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
+{
+    options.Cookie.Name = "SmartLaws.Session";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+    options.SlidingExpiration = false;
+});
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = 429;
+    options.AddPolicy("auth", http => RateLimitPartition.GetFixedWindowLimiter(http.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions { PermitLimit = 600, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    options.OnRejected = async (context, token) => {
+        context.HttpContext.Response.Headers.RetryAfter = "5";
+        await context.HttpContext.Response.WriteAsJsonAsync(new { message="ระบบกำลังให้บริการจำนวนมาก กรุณาลองใหม่อีกสักครู่" },token);
+    };
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext,string>(http => {
+        if (!http.Request.Path.StartsWithSegments("/api")) return RateLimitPartition.GetNoLimiter("static");
+        var path=http.Request.Path.Value ?? "";
+        var category=path.StartsWith("/api/auth/") ? "Auth" :
+            path=="/api/files" && HttpMethods.IsPost(http.Request.Method) ? "Uploads" :
+            path.EndsWith("/content") ? "Downloads" : path.EndsWith("/export-docx") ? "Exports" : "Requests";
+        int defaultLimit=category switch { "Auth"=>16,"Uploads"=>8,"Downloads"=>24,"Exports"=>4,_=>96 };
+        return RateLimitPartition.GetConcurrencyLimiter(category,_=>new ConcurrencyLimiterOptions {
+            PermitLimit=builder.Configuration.GetValue($"Capacity:{category}Concurrency",defaultLimit),
+            QueueLimit=builder.Configuration.GetValue("Capacity:QueueLimit",256),QueueProcessingOrder=QueueProcessingOrder.OldestFirst
+        });
+    });
+});
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
@@ -13,7 +49,15 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-app.UseCors();
+app.UseAuthentication();
+app.UseRateLimiter();
+app.Use(async (http, next) =>
+{
+    if (http.Request.Path.StartsWithSegments("/api")) http.Response.Headers.CacheControl = "no-store";
+    http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    http.Response.Headers["Referrer-Policy"] = "same-origin";
+    await next();
+});
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -22,56 +66,32 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<DatabaseService>();
     await db.InitializeDatabaseAsync();
+    await WorkflowModule.InitializeAsync(db);
+    await AppointmentModule.InitializeAsync(db);
+    await AppointmentFiles.InitializeAsync(db);
+    await CapacitySupport.InitializeAsync(db);
 }
+
+var api = app.MapGroup("/api").AddEndpointFilter<AccessControl>();
+WorkflowModule.Map(api);
+AppointmentModule.Map(api);
+AppointmentFiles.Map(api);
+ProfileAutofill.Map(api);
+AccountManagement.Map(api);
+CapacitySupport.MapFiles(api);
 
 // ==================== API ENDPOINTS ====================
 
 // 1. Dashboard & Reports Summary
-app.MapGet("/api/dashboard", async (DatabaseService db) =>
-{
-    using var conn = db.CreateConnection();
-    var cases = (await conn.QueryAsync<LawCase>("SELECT * FROM SL_LawCases ORDER BY UpdatedAt DESC")).ToList();
-    var docs = (await conn.QueryAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments ORDER BY UpdatedAt DESC")).ToList();
-    var lawyers = (await conn.QueryAsync<LawyerProfile>("SELECT * FROM SL_LawyerProfiles ORDER BY Id")).ToList();
-    var templates = (await conn.QueryAsync<CourtFormTemplate>("SELECT * FROM SL_CourtFormTemplates ORDER BY Id")).ToList();
-    var signatures = (await conn.QueryAsync<ElectronicSignature>("SELECT * FROM SL_ElectronicSignatures ORDER BY Id")).ToList();
-    var users = (await conn.QueryAsync<UserAccount>("SELECT * FROM SL_UserAccounts ORDER BY Id")).ToList();
-    var plans = (await conn.QueryAsync<SubscriptionPlan>("SELECT * FROM SL_SubscriptionPlans ORDER BY Id")).ToList();
-    var slips = (await conn.QueryAsync<PaymentSlip>("SELECT * FROM SL_PaymentSlips ORDER BY Id DESC")).ToList();
-    var caseFiles = (await conn.QueryAsync<CaseFileAttachment>("SELECT * FROM SL_CaseFileAttachments ORDER BY DirectoryIndexNo, Id DESC")).ToList();
-    var clerkMappings = (await conn.QueryAsync<LawyerClerkMapping>("SELECT * FROM SL_LawyerClerkMappings ORDER BY LawyerUserId, IsDefaultTypist DESC, Id")).ToList();
-
-    return Results.Ok(new
-    {
-        TotalCases = cases.Count,
-        CriminalCases = cases.Count(c => c.CaseCategory == "อาญา"),
-        CivilCases = cases.Count(c => c.CaseCategory == "แพ่ง"),
-        PlaintiffLawyerCases = cases.Count(c => c.LawyerRole.Contains("โจทก์") || c.LawyerRole.Contains("ผู้ร้อง")),
-        DefendantLawyerCases = cases.Count(c => c.LawyerRole.Contains("จำเลย") || c.LawyerRole.Contains("ผู้คัดค้าน")),
-        TotalDocuments = docs.Count,
-        TotalClaimAmount = cases.Sum(c => c.ClaimAmount),
-        Cases = cases,
-        RecentDocuments = docs,
-        Lawyers = lawyers,
-        Templates = templates,
-        Signatures = signatures,
-        Users = users,
-        Plans = plans,
-        PaymentSlips = slips,
-        CaseFiles = caseFiles,
-        ClerkMappings = clerkMappings
-    });
-});
+api.MapGet("/dashboard", CapacitySupport.Dashboard);
 
 // 2. Cases CRUD
-app.MapGet("/api/cases", async (DatabaseService db) =>
+api.MapGet("/cases", (HttpContext http) =>
 {
-    using var conn = db.CreateConnection();
-    var cases = await conn.QueryAsync<LawCase>("SELECT * FROM SL_LawCases ORDER BY Id DESC");
-    return Results.Ok(cases);
+    return Results.Ok(((List<LawCase>)http.Items["visibleCases"]!).OrderByDescending(c=>c.Id));
 });
 
-app.MapGet("/api/cases/{id:int}", async (int id, DatabaseService db) =>
+api.MapGet("/cases/{id:int}", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var lawCase = await conn.QueryFirstOrDefaultAsync<LawCase>("SELECT * FROM SL_LawCases WHERE Id = @Id", new { Id = id });
@@ -81,13 +101,15 @@ app.MapGet("/api/cases/{id:int}", async (int id, DatabaseService db) =>
     return Results.Ok(new { Case = lawCase, Parties = parties, Documents = docs });
 });
 
-app.MapPost("/api/cases", async (HttpContext http, LawCase model, DatabaseService db) =>
+api.MapPost("/cases", async (HttpContext http, LawCase model, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
-    var userIdStr = http.Request.Query["userId"].FirstOrDefault();
+    await conn.OpenAsync();
+    using var transaction = conn.BeginTransaction(System.Data.IsolationLevel.Serializable);
+    var userIdStr = AccountSecurity.User(http).Id.ToString();
     if (int.TryParse(userIdStr, out var userId) && userId > 0)
     {
-        var user = await conn.QueryFirstOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WHERE Id = @Id", new { Id = userId });
+        var user = await conn.QueryFirstOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WITH (UPDLOCK) WHERE Id = @Id", new { Id = userId }, transaction);
         if (user != null && user.Role != "Admin" && user.UsedCasesCount >= user.MaxCasesQuota)
         {
             return Results.BadRequest(new
@@ -118,22 +140,23 @@ app.MapPost("/api/cases", async (HttpContext http, LawCase model, DatabaseServic
             @PlaintiffName, @DefendantName, @ChargeOrCauseOfAction, @ClaimAmount, @InterestRate,
             @CurrentProceduralStage, @Status, @NextHearingDate, @NextHearingNote, @PrimaryLawyerId, @ClerkId, @CaseSummary
         );
-    ", model);
+    ", model, transaction);
 
     if (int.TryParse(userIdStr, out var uid) && uid > 0)
     {
-        await conn.ExecuteAsync("UPDATE SL_UserAccounts SET UsedCasesCount = UsedCasesCount + 1 WHERE Id = @Id", new { Id = uid });
+        await conn.ExecuteAsync("UPDATE SL_UserAccounts SET UsedCasesCount = UsedCasesCount + 1 WHERE Id = @Id", new { Id = uid }, transaction);
     }
     else if (model.PrimaryLawyerId > 0)
     {
-        await conn.ExecuteAsync("UPDATE SL_UserAccounts SET UsedCasesCount = UsedCasesCount + 1 WHERE LawyerProfileId = @LawyerProfileId", new { LawyerProfileId = model.PrimaryLawyerId });
+        await conn.ExecuteAsync("UPDATE SL_UserAccounts SET UsedCasesCount = UsedCasesCount + 1 WHERE LawyerProfileId = @LawyerProfileId", new { LawyerProfileId = model.PrimaryLawyerId }, transaction);
     }
 
+    transaction.Commit();
     model.Id = id;
     return Results.Ok(model);
 });
 
-app.MapPut("/api/cases/{id:int}", async (int id, LawCase model, DatabaseService db) =>
+api.MapPut("/cases/{id:int}", async (int id, LawCase model, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     model.Id = id;
@@ -166,7 +189,7 @@ app.MapPut("/api/cases/{id:int}", async (int id, LawCase model, DatabaseService 
     return Results.Ok(model);
 });
 
-app.MapPut("/api/cases/{id:int}/clerk", async (int id, LawCase req, DatabaseService db) =>
+api.MapPut("/cases/{id:int}/clerk", async (int id, LawCase req, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     await conn.ExecuteAsync(@"
@@ -179,15 +202,18 @@ app.MapPut("/api/cases/{id:int}/clerk", async (int id, LawCase req, DatabaseServ
     return Results.Ok(updated);
 });
 
-app.MapDelete("/api/cases/{id:int}", async (int id, DatabaseService db) =>
+api.MapDelete("/cases/{id:int}", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
-    await conn.ExecuteAsync("DELETE FROM SL_CaseDocuments WHERE CaseId = @Id; DELETE FROM SL_CaseParties WHERE CaseId = @Id; DELETE FROM SL_LawCases WHERE Id = @Id;", new { Id = id });
+    await conn.OpenAsync();
+    using var tx = conn.BeginTransaction();
+    await conn.ExecuteAsync("DELETE FROM SL_Appointments WHERE CaseId=@Id; DELETE FROM SL_LitigationEvents WHERE CaseId=@Id; DELETE FROM SL_CaseFileAttachments WHERE CaseId=@Id; DELETE FROM SL_CaseDocuments WHERE CaseId = @Id; DELETE FROM SL_CaseParties WHERE CaseId = @Id; DELETE FROM SL_LawCases WHERE Id = @Id;", new { Id = id }, tx);
+    tx.Commit();
     return Results.Ok(new { Deleted = true });
 });
 
 // 3. Case Parties CRUD
-app.MapPost("/api/parties", async (CaseParty party, DatabaseService db) =>
+api.MapPost("/parties", async (CaseParty party, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var id = await conn.ExecuteScalarAsync<int>(@"
@@ -208,14 +234,14 @@ app.MapPost("/api/parties", async (CaseParty party, DatabaseService db) =>
 });
 
 // 4. Court Form Templates
-app.MapGet("/api/templates", async (DatabaseService db) =>
+api.MapGet("/templates", async (DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var list = await conn.QueryAsync<CourtFormTemplate>("SELECT * FROM SL_CourtFormTemplates ORDER BY Id");
     return Results.Ok(list);
 });
 
-app.MapPost("/api/templates", async (CourtFormTemplate tpl, DatabaseService db) =>
+api.MapPost("/templates", async (CourtFormTemplate tpl, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var id = await conn.ExecuteScalarAsync<int>(@"
@@ -228,7 +254,7 @@ app.MapPost("/api/templates", async (CourtFormTemplate tpl, DatabaseService db) 
 });
 
 // 5. Case Documents (Petitions, Plaints, Answers, Witness Lists, Summons, Appointments)
-app.MapGet("/api/documents", async (int? caseId, DatabaseService db) =>
+api.MapGet("/documents", async (int? caseId, HttpContext http, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     if (caseId.HasValue && caseId.Value > 0)
@@ -236,11 +262,11 @@ app.MapGet("/api/documents", async (int? caseId, DatabaseService db) =>
         var list = await conn.QueryAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments WHERE CaseId = @CaseId ORDER BY Id DESC", new { CaseId = caseId.Value });
         return Results.Ok(list);
     }
-    var all = await conn.QueryAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments ORDER BY UpdatedAt DESC");
+    var all = await conn.QueryAsync<CaseDocument>($"SELECT * FROM SL_CaseDocuments WHERE CaseId IN ({CapacitySupport.CaseScope}) ORDER BY UpdatedAt DESC", AccountSecurity.User(http));
     return Results.Ok(all);
 });
 
-app.MapGet("/api/documents/{id:int}", async (int id, DatabaseService db) =>
+api.MapGet("/documents/{id:int}", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var doc = await conn.QueryFirstOrDefaultAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments WHERE Id = @Id", new { Id = id });
@@ -249,7 +275,7 @@ app.MapGet("/api/documents/{id:int}", async (int id, DatabaseService db) =>
     return Results.Ok(new { Document = doc, Case = lawCase });
 });
 
-app.MapPost("/api/documents", async (CaseDocument doc, DatabaseService db) =>
+api.MapPost("/documents", async (CaseDocument doc, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     await conn.OpenAsync();
@@ -258,7 +284,7 @@ app.MapPost("/api/documents", async (CaseDocument doc, DatabaseService db) =>
     return Results.Ok(doc);
 });
 
-app.MapPut("/api/documents/{id:int}", async (int id, CaseDocument doc, DatabaseService db) =>
+api.MapPut("/documents/{id:int}", async (int id, CaseDocument doc, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     doc.Id = id;
@@ -309,7 +335,7 @@ app.MapPut("/api/documents/{id:int}", async (int id, CaseDocument doc, DatabaseS
     return Results.Ok(doc);
 });
 
-app.MapDelete("/api/documents/{id:int}", async (int id, DatabaseService db) =>
+api.MapDelete("/documents/{id:int}", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     await conn.ExecuteAsync("DELETE FROM SL_CaseDocuments WHERE Id = @Id", new { Id = id });
@@ -317,7 +343,7 @@ app.MapDelete("/api/documents/{id:int}", async (int id, DatabaseService db) =>
 });
 
 // Export Word (.docx)
-app.MapGet("/api/documents/{id:int}/export-docx", async (int id, DatabaseService db, WordExportService wordExport) =>
+api.MapGet("/documents/{id:int}/export-docx", async (int id, DatabaseService db, WordExportService wordExport) =>
 {
     using var conn = db.CreateConnection();
     var doc = await conn.QueryFirstOrDefaultAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments WHERE Id = @Id", new { Id = id });
@@ -330,13 +356,13 @@ app.MapGet("/api/documents/{id:int}/export-docx", async (int id, DatabaseService
 });
 
 // 6. Lawyers & Electronic Signatures CRUD (Back-office)
-app.MapGet("/api/lawyers", async (DatabaseService db) =>
+api.MapGet("/lawyers", async (HttpContext http, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
-    return Results.Ok(await conn.QueryAsync<LawyerProfile>("SELECT * FROM SL_LawyerProfiles ORDER BY Id"));
+    return Results.Ok(await conn.QueryAsync<LawyerProfile>("SELECT * FROM SL_LawyerProfiles WHERE Id=@LawyerProfileId",AccountSecurity.User(http)));
 });
 
-app.MapPost("/api/lawyers", async (LawyerProfile model, DatabaseService db) =>
+api.MapPost("/lawyers", async (LawyerProfile model, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var id = await conn.ExecuteScalarAsync<int>(@"
@@ -348,7 +374,7 @@ app.MapPost("/api/lawyers", async (LawyerProfile model, DatabaseService db) =>
     return Results.Ok(model);
 });
 
-app.MapPut("/api/lawyers/{id:int}", async (int id, LawyerProfile model, DatabaseService db) =>
+api.MapPut("/lawyers/{id:int}", async (int id, LawyerProfile model, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     model.Id = id;
@@ -363,13 +389,13 @@ app.MapPut("/api/lawyers/{id:int}", async (int id, LawyerProfile model, Database
     return Results.Ok(model);
 });
 
-app.MapGet("/api/signatures", async (DatabaseService db) =>
+api.MapGet("/signatures", async (DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     return Results.Ok(await conn.QueryAsync<ElectronicSignature>("SELECT * FROM SL_ElectronicSignatures ORDER BY Id DESC"));
 });
 
-app.MapPost("/api/signatures", async (ElectronicSignature sig, DatabaseService db) =>
+api.MapPost("/signatures", async (ElectronicSignature sig, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     if (string.IsNullOrWhiteSpace(sig.VerificationHash))
@@ -395,7 +421,7 @@ app.MapPost("/api/signatures", async (ElectronicSignature sig, DatabaseService d
     return Results.Ok(sig);
 });
 
-app.MapDelete("/api/signatures/{id:int}", async (int id, DatabaseService db) =>
+api.MapDelete("/signatures/{id:int}", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     await conn.ExecuteAsync("DELETE FROM SL_ElectronicSignatures WHERE Id = @Id", new { Id = id });
@@ -404,28 +430,21 @@ app.MapDelete("/api/signatures/{id:int}", async (int id, DatabaseService db) =>
 
 // ==================== 7. AUTH, LAWYER REGISTRATION (3-CASE TRIAL), QUOTA & ADMIN SYSTEM ====================
 
-app.MapGet("/api/users", async (DatabaseService db) =>
+api.MapGet("/users", async (DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     return Results.Ok(await conn.QueryAsync<UserAccount>("SELECT * FROM SL_UserAccounts ORDER BY Id"));
 });
 
-app.MapPost("/api/auth/login", async (UserAccount loginReq, DatabaseService db) =>
+api.MapPost("/auth/login", async (LoginRequest loginReq, HttpContext http, DatabaseService db, LoginAttemptLimiter attempts) =>
 {
+    if (string.IsNullOrWhiteSpace(loginReq.Username) || loginReq.Username.Length>200 || loginReq.Password.Length>200) return Results.BadRequest();
+    using var attempt = attempts.Attempt(loginReq.Username);
+    if (!attempt.IsAcquired) { http.Response.Headers.RetryAfter="60"; return Results.Json(new {message="ลองเข้าสู่ระบบบัญชีนี้มากเกินไป กรุณารอ 1 นาที"},statusCode:429); }
     using var conn = db.CreateConnection();
-    UserAccount? user = null;
-    if (loginReq.Id > 0)
-    {
-        user = await conn.QueryFirstOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WHERE Id = @Id", new { loginReq.Id });
-    }
-    else
-    {
-        user = await conn.QueryFirstOrDefaultAsync<UserAccount>(
-            "SELECT * FROM SL_UserAccounts WHERE (Username = @Username OR Email = @Username) AND (PasswordHash = @PasswordHash OR @PasswordHash = '')",
-            new { Username = loginReq.Username?.Trim() ?? "", PasswordHash = loginReq.PasswordHash?.Trim() ?? "" });
-    }
+    var user = await conn.QueryFirstOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WHERE Username=@Username OR Email=@Username", new { Username = loginReq.Username.Trim() });
 
-    if (user == null)
+    if (user == null || !AccountSecurity.Verify(user, loginReq.Password))
     {
         return Results.BadRequest(new { message = "ไม่พบบัญชีผู้ใช้งาน หรือรหัสผ่านไม่ถูกต้อง" });
     }
@@ -433,13 +452,18 @@ app.MapPost("/api/auth/login", async (UserAccount loginReq, DatabaseService db) 
     {
         return Results.BadRequest(new { message = "บัญชีนี้ถูกระงับการใช้งานชั่วคราว กรุณาติดต่อผู้ดูแลระบบ" });
     }
+    if (!user.PasswordHash.StartsWith("AQAAAA"))
+        await conn.ExecuteAsync("UPDATE SL_UserAccounts SET PasswordHash=@Hash WHERE Id=@Id", new { user.Id, Hash = AccountSecurity.Hash(loginReq.Password) });
+    await AccountSecurity.SignIn(http, db, user);
+    user.PasswordHash = "";
     return Results.Ok(user);
-});
+}).RequireRateLimiting("auth");
 
 // ลงทะเบียนสมาชิกทนายความใหม่ รับสิทธิ์ทดลองใช้งานฟรี 3 คดีทันที
-app.MapPost("/api/auth/register", async (UserAccount reg, DatabaseService db) =>
+api.MapPost("/auth/register", async (UserAccount reg, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
+    if (reg.PasswordHash.Length < 10) return Results.BadRequest(new { message = "รหัสผ่านต้องมีอย่างน้อย 10 ตัวอักษร" });
     if (string.IsNullOrWhiteSpace(reg.Username) || string.IsNullOrWhiteSpace(reg.FullName))
     {
         return Results.BadRequest(new { message = "กรุณาระบุชื่อผู้ใช้งาน (Username) และชื่อ-นามสกุลทนายความ" });
@@ -493,7 +517,7 @@ app.MapPost("/api/auth/register", async (UserAccount reg, DatabaseService db) =>
     reg.UsedCasesCount = 0;
     reg.SubscriptionExpireDate = DateTime.UtcNow.AddDays(30);
     reg.AccountStatus = "Active";
-    if (string.IsNullOrWhiteSpace(reg.PasswordHash)) reg.PasswordHash = "123456";
+    reg.PasswordHash = AccountSecurity.Hash(reg.PasswordHash);
 
     var userId = await conn.ExecuteScalarAsync<int>(@"
         INSERT INTO SL_UserAccounts (Username, PasswordHash, FullName, Role, LawyerProfileId, LicenseNo, CitizenId, Phone, Email, OfficeName, PlanType, PlanName, MaxCasesQuota, UsedCasesCount, SubscriptionExpireDate, AccountStatus)
@@ -502,13 +526,17 @@ app.MapPost("/api/auth/register", async (UserAccount reg, DatabaseService db) =>
     ", reg);
 
     reg.Id = userId;
+    reg.PasswordHash = "";
     return Results.Ok(reg);
-});
+}).RequireRateLimiting("auth");
 
 // แอดมินปรับปรุงโควต้าคดี แพ็กเกจ หรือสถานะสมาชิกทนายความ
-app.MapPut("/api/admin/users/{id:int}/quota", async (int id, UserAccount updateReq, DatabaseService db) =>
+api.MapPut("/admin/users/{id:int}/quota", async (int id, UserAccount updateReq, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
+    var targetUser = await conn.QuerySingleOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WHERE Id=@id", new { id });
+    if (targetUser == null) return Results.NotFound();
+    if (updateReq.Role != "Admin" && targetUser.LawyerProfileId == 0) return Results.BadRequest(new { message = "บัญชีนี้ไม่มีโปรไฟล์ทนายหรือเสมียน กรุณาสร้างบัญชีตามบทบาทก่อน" });
     await conn.ExecuteAsync(@"
         UPDATE SL_UserAccounts SET
             FullName = @FullName,
@@ -536,19 +564,21 @@ app.MapPut("/api/admin/users/{id:int}/quota", async (int id, UserAccount updateR
         updateReq.UsedCasesCount,
         AccountStatus = string.IsNullOrWhiteSpace(updateReq.AccountStatus) ? "Active" : updateReq.AccountStatus
     });
+    if (updateReq.AccountStatus != "Active" || updateReq.Role != targetUser.Role)
+        await conn.ExecuteAsync("DELETE FROM SL_Sessions WHERE UserId=@id", new { id });
     var updated = await conn.QueryFirstOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WHERE Id = @Id", new { Id = id });
     return Results.Ok(updated);
 });
 
 // ==================== 8. SUBSCRIPTION PLANS & PAYMENT SLIPS ====================
 
-app.MapGet("/api/plans", async (DatabaseService db) =>
+api.MapGet("/plans", async (DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     return Results.Ok(await conn.QueryAsync<SubscriptionPlan>("SELECT * FROM SL_SubscriptionPlans ORDER BY Id"));
 });
 
-app.MapPost("/api/admin/plans", async (SubscriptionPlan plan, DatabaseService db) =>
+api.MapPost("/admin/plans", async (SubscriptionPlan plan, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var id = await conn.ExecuteScalarAsync<int>(@"
@@ -560,7 +590,7 @@ app.MapPost("/api/admin/plans", async (SubscriptionPlan plan, DatabaseService db
     return Results.Ok(plan);
 });
 
-app.MapPut("/api/admin/plans/{id:int}", async (int id, SubscriptionPlan plan, DatabaseService db) =>
+api.MapPut("/admin/plans/{id:int}", async (int id, SubscriptionPlan plan, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     plan.Id = id;
@@ -580,13 +610,13 @@ app.MapPut("/api/admin/plans/{id:int}", async (int id, SubscriptionPlan plan, Da
     return Results.Ok(plan);
 });
 
-app.MapGet("/api/payments/slips", async (DatabaseService db) =>
+api.MapGet("/payments/slips", async (DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     return Results.Ok(await conn.QueryAsync<PaymentSlip>("SELECT * FROM SL_PaymentSlips ORDER BY Id DESC"));
 });
 
-app.MapPost("/api/payments/slips", async (PaymentSlip slip, DatabaseService db) =>
+api.MapPost("/payments/slips", async (PaymentSlip slip, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     if (string.IsNullOrWhiteSpace(slip.SlipImageBase64))
@@ -608,11 +638,14 @@ app.MapPost("/api/payments/slips", async (PaymentSlip slip, DatabaseService db) 
     return Results.Ok(slip);
 });
 
-app.MapPost("/api/admin/slips/{id:int}/approve", async (int id, PaymentSlip? reviewReq, DatabaseService db) =>
+api.MapPost("/admin/slips/{id:int}/approve", async (int id, PaymentSlip? reviewReq, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
-    var slip = await conn.QueryFirstOrDefaultAsync<PaymentSlip>("SELECT * FROM SL_PaymentSlips WHERE Id = @Id", new { Id = id });
+    await conn.OpenAsync();
+    using var tx = conn.BeginTransaction();
+    var slip = await conn.QueryFirstOrDefaultAsync<PaymentSlip>("SELECT * FROM SL_PaymentSlips WITH (UPDLOCK,HOLDLOCK) WHERE Id = @Id", new { Id = id }, tx);
     if (slip == null) return Results.NotFound();
+    if (slip.Status != "รอตรวจสอบ") return Results.Conflict(new { message = "สลิปนี้ได้รับการตรวจสอบแล้ว" });
 
     var quotaToAdd = (reviewReq?.CasesQuotaRequested > 0) ? reviewReq.CasesQuotaRequested : slip.CasesQuotaRequested;
     var remark = !string.IsNullOrWhiteSpace(reviewReq?.AdminRemark) ? reviewReq.AdminRemark : "ตรวจสอบสลิปโอนเงินถูกต้อง อนุมัติเพิ่มโควต้าเรียบร้อย";
@@ -626,9 +659,9 @@ app.MapPost("/api/admin/slips/{id:int}/approve", async (int id, PaymentSlip? rev
             ReviewedBy = @Reviewer,
             ReviewedAt = SYSUTCDATETIME()
         WHERE Id = @Id;
-    ", new { Id = id, Quota = quotaToAdd, Remark = remark, Reviewer = reviewer });
+    ", new { Id = id, Quota = quotaToAdd, Remark = remark, Reviewer = reviewer }, tx);
 
-    var plan = await conn.QueryFirstOrDefaultAsync<SubscriptionPlan>("SELECT * FROM SL_SubscriptionPlans WHERE Id = @PlanId", new { slip.PlanId });
+    var plan = await conn.QueryFirstOrDefaultAsync<SubscriptionPlan>("SELECT * FROM SL_SubscriptionPlans WHERE Id = @PlanId", new { slip.PlanId }, tx);
     int addDays = plan?.DurationDays ?? (slip.PlanCategory == "Yearly" ? 365 : 30);
 
     await conn.ExecuteAsync(@"
@@ -646,66 +679,64 @@ app.MapPost("/api/admin/slips/{id:int}/approve", async (int id, PaymentSlip? rev
         slip.PlanName,
         AddDays = addDays,
         slip.UserId
-    });
-
+    }, tx);
+    tx.Commit();
     var updatedUser = await conn.QueryFirstOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WHERE Id = @UserId", new { slip.UserId });
     return Results.Ok(new { Approved = true, SlipId = id, AddedQuota = quotaToAdd, User = updatedUser });
 });
 
-app.MapPost("/api/admin/slips/{id:int}/reject", async (int id, PaymentSlip? reviewReq, DatabaseService db) =>
+api.MapPost("/admin/slips/{id:int}/reject", async (int id, PaymentSlip? reviewReq, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
-    await conn.ExecuteAsync(@"
+    var changed = await conn.ExecuteAsync(@"
         UPDATE SL_PaymentSlips SET
             Status = N'ปฏิเสธ',
             AdminRemark = @Remark,
             ReviewedBy = @Reviewer,
             ReviewedAt = SYSUTCDATETIME()
-        WHERE Id = @Id;
+        WHERE Id = @Id AND Status = N'รอตรวจสอบ';
     ", new
     {
         Id = id,
         Remark = reviewReq?.AdminRemark ?? "ยอดเงินหรือหลักฐานสลิปไม่ถูกต้อง",
         Reviewer = reviewReq?.ReviewedBy ?? "ผู้ดูแลระบบสูงสุด (Admin)"
     });
-    return Results.Ok(new { Rejected = true, SlipId = id });
+    return changed == 0 ? Results.Conflict(new { message = "สลิปนี้ได้รับการตรวจสอบแล้ว" }) : Results.Ok(new { Rejected = true, SlipId = id });
 });
 
 // ==================== 9. CASE FILE REPOSITORY & COURT FORM DIRECTORY ((00)-(15)) ====================
 
-app.MapGet("/api/files", async (int? caseId, DatabaseService db) =>
+api.MapGet("/files", async (int? caseId, HttpContext http, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
-    if (caseId.HasValue && caseId.Value > 0)
-    {
-        return Results.Ok(await conn.QueryAsync<CaseFileAttachment>(
-            "SELECT * FROM SL_CaseFileAttachments WHERE CaseId = @CaseId ORDER BY DirectoryIndexNo, Id DESC",
-            new { CaseId = caseId.Value }));
-    }
-    return Results.Ok(await conn.QueryAsync<CaseFileAttachment>("SELECT * FROM SL_CaseFileAttachments ORDER BY CaseId, DirectoryIndexNo, Id DESC"));
+    var parameters = new DynamicParameters(AccountSecurity.User(http)); parameters.Add("caseId",caseId);
+    return Results.Ok(await conn.QueryAsync<CaseFileAttachment>(new CommandDefinition(
+        $"SELECT {CapacitySupport.FileColumns} FROM SL_CaseFileAttachments f WHERE f.CaseId IN ({CapacitySupport.CaseScope}) AND (@caseId IS NULL OR f.CaseId=@caseId) ORDER BY f.CaseId,f.DirectoryIndexNo,f.Id DESC",
+        parameters, cancellationToken:http.RequestAborted)));
 });
-
-app.MapPost("/api/files", async (CaseFileAttachment file, DatabaseService db) =>
+api.MapPost("/files", async (CaseFileAttachment file, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var id = await conn.ExecuteScalarAsync<int>(@"
         INSERT INTO SL_CaseFileAttachments (
             CaseId, DocumentId, DirectoryIndexNo, FormCode, DirectoryCategoryName,
             FileTitle, StorageType, FileStatus, FileUrlOrPath, FileDataBase64,
-            MimeType, PageCount, UploadedBy, Remark
+            MimeType, PageCount, UploadedBy, Remark, CourtLevel, JudgmentBlackCaseNo, JudgmentRedCaseNo, JudgmentDate
         )
         OUTPUT INSERTED.Id
         VALUES (
             @CaseId, @DocumentId, @DirectoryIndexNo, @FormCode, @DirectoryCategoryName,
             @FileTitle, @StorageType, @FileStatus, @FileUrlOrPath, @FileDataBase64,
-            @MimeType, @PageCount, @UploadedBy, @Remark
+            @MimeType, @PageCount, @UploadedBy, @Remark, @CourtLevel, @JudgmentBlackCaseNo, @JudgmentRedCaseNo, @JudgmentDate
         );
     ", file);
     file.Id = id;
+    if (!string.IsNullOrEmpty(file.FileDataBase64)) file.FileUrlOrPath = $"/api/files/{id}/content";
+    file.FileDataBase64 = "";
     return Results.Ok(file);
 });
 
-app.MapPut("/api/files/{id:int}/status", async (int id, CaseFileAttachment req, DatabaseService db) =>
+api.MapPut("/files/{id:int}/status", async (int id, CaseFileAttachment req, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     await conn.ExecuteAsync(@"
@@ -714,11 +745,11 @@ app.MapPut("/api/files/{id:int}/status", async (int id, CaseFileAttachment req, 
             Remark = ISNULL(@Remark, Remark)
         WHERE Id = @Id;
     ", new { Id = id, req.FileStatus, req.Remark });
-    var updated = await conn.QueryFirstOrDefaultAsync<CaseFileAttachment>("SELECT * FROM SL_CaseFileAttachments WHERE Id = @Id", new { Id = id });
+    var updated = await conn.QueryFirstOrDefaultAsync<CaseFileAttachment>($"SELECT {CapacitySupport.FileColumns} FROM SL_CaseFileAttachments f WHERE f.Id = @Id", new { Id = id });
     return Results.Ok(updated);
 });
 
-app.MapDelete("/api/files/{id:int}", async (int id, DatabaseService db) =>
+api.MapDelete("/files/{id:int}", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     await conn.ExecuteAsync("DELETE FROM SL_CaseFileAttachments WHERE Id = @Id", new { Id = id });
@@ -726,7 +757,7 @@ app.MapDelete("/api/files/{id:int}", async (int id, DatabaseService db) =>
 });
 
 // Stream Real Sample PDFs & Official Court Form PDFs for the Popup PDF Viewer Modal
-app.MapGet("/api/files/stream-sample/{key}", (string key) =>
+api.MapGet("/files/stream-sample/{key}", (string key) =>
 {
     const string crimDir = @"c:\Users\Oh-z600-A\OneDrive\Desktop\คดีความ\คดีพี่โลห์\อ398-2568";
     const string uploadedDir = @"C:\Users\Oh-z600-A\.gemini\antigravity\brain\1978129b-6b9f-4075-ab4a-1c3236adc192\.user_uploaded";
@@ -767,7 +798,7 @@ app.MapGet("/api/files/stream-sample/{key}", (string key) =>
 // ==================== 10. LAWYER <-> CLERK MANY-TO-MANY ACCOUNT MANAGEMENT ====================
 // เสมียนทนายเป็นส่วนหนึ่งของแอคเคาท์ทนาย และเสมียน 1 คนสามารถทำงานให้ทนายได้มากกว่า 1 คน ขึ้นอยู่กับที่ทนายจะตั้งเสมียนและแอดแอคเคาท์ให้
 
-app.MapGet("/api/clerk-mappings", async (int? lawyerUserId, int? clerkUserId, DatabaseService db) =>
+api.MapGet("/clerk-mappings", async (int? lawyerUserId, int? clerkUserId, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     if (lawyerUserId.HasValue && lawyerUserId.Value > 0)
@@ -785,7 +816,7 @@ app.MapGet("/api/clerk-mappings", async (int? lawyerUserId, int? clerkUserId, Da
     return Results.Ok(await conn.QueryAsync<LawyerClerkMapping>("SELECT * FROM SL_LawyerClerkMappings ORDER BY LawyerUserId, Id"));
 });
 
-app.MapPost("/api/lawyers/{lawyerUserId:int}/clerks", async (int lawyerUserId, AssignClerkRequest req, DatabaseService db) =>
+api.MapPost("/lawyers/{lawyerUserId:int}/clerks", async (int lawyerUserId, AssignClerkRequest req, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var lawyerUser = await conn.QueryFirstOrDefaultAsync<UserAccount>("SELECT * FROM SL_UserAccounts WHERE Id = @Id", new { Id = lawyerUserId });
@@ -859,7 +890,7 @@ app.MapPost("/api/lawyers/{lawyerUserId:int}/clerks", async (int lawyerUserId, A
             ", new
             {
                 Username = req.Username.Trim(),
-                PasswordHash = string.IsNullOrWhiteSpace(req.PasswordHash) ? "123456" : req.PasswordHash,
+                PasswordHash = AccountSecurity.Hash(req.PasswordHash),
                 req.FullName,
                 ClerkProfileId = clerkProfileId,
                 CitizenId = string.IsNullOrWhiteSpace(req.CitizenId) ? "3-3301-00881-29-4" : req.CitizenId,
@@ -910,7 +941,7 @@ app.MapPost("/api/lawyers/{lawyerUserId:int}/clerks", async (int lawyerUserId, A
     return Results.Ok(createdMap);
 });
 
-app.MapPut("/api/clerk-mappings/{id:int}/default", async (int id, DatabaseService db) =>
+api.MapPut("/clerk-mappings/{id:int}/default", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     var m = await conn.QueryFirstOrDefaultAsync<LawyerClerkMapping>("SELECT * FROM SL_LawyerClerkMappings WHERE Id = @Id", new { Id = id });
@@ -920,7 +951,7 @@ app.MapPut("/api/clerk-mappings/{id:int}/default", async (int id, DatabaseServic
     return Results.Ok(new { Updated = true });
 });
 
-app.MapDelete("/api/clerk-mappings/{id:int}", async (int id, DatabaseService db) =>
+api.MapDelete("/clerk-mappings/{id:int}", async (int id, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
     await conn.ExecuteAsync("DELETE FROM SL_LawyerClerkMappings WHERE Id = @Id", new { Id = id });

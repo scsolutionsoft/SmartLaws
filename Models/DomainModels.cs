@@ -245,6 +245,10 @@ public class PaymentSlip
 /// </summary>
 public class CaseFileAttachment
 {
+    public string CourtLevel { get; set; } = string.Empty;
+    public string JudgmentBlackCaseNo { get; set; } = string.Empty;
+    public string JudgmentRedCaseNo { get; set; } = string.Empty;
+    public DateTime? JudgmentDate { get; set; }
     public int Id { get; set; }
     public int CaseId { get; set; }
     public int? DocumentId { get; set; }

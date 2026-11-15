@@ -981,12 +981,12 @@ window.App = {
         const tpl = this.state.templates.find(t => t.id === Number(tplId));
         if (!tpl) return;
         const accessibleCases = this.getAccessibleCases();
-        const lawCase = accessibleCases.find(c => c.id === Number(this.state.currentCaseId)) || accessibleCases[0] || this.state.cases[0];
+        const lawCase = accessibleCases.find(c => c.id === Number(this.state.currentCaseId)) || accessibleCases[0];
         const isDef = lawCase?.lawyerRole?.includes('จำเลย');
-        const effectiveLawyer = this.getEffectiveLawyerAccount();
-        const defaultLawyer = this.state.lawyers.find(l => l.id === (lawCase?.primaryLawyerId || effectiveLawyer?.lawyerProfileId))
-            || (isDef ? (this.state.lawyers[1] || this.state.lawyers[0]) : this.state.lawyers[0]);
-        const clerk = this.state.lawyers.find(l => l.id === lawCase?.clerkId) || this.state.lawyers[2] || defaultLawyer;
+        const effectiveLawyer = this.state.currentUser;
+        if (!lawCase || !effectiveLawyer || effectiveLawyer.role === 'Admin') return this.showToast('กรุณาเลือกคดีที่มีสิทธิ์ก่อน');
+        const defaultLawyer = this.state.lawyers.find(l => l.id === effectiveLawyer?.lawyerProfileId);
+        const clerk = effectiveLawyer?.role === 'Clerk' ? defaultLawyer : null;
 
         let defaultClauses = [];
         try { defaultClauses = JSON.parse(tpl.defaultClausesJson || '[]'); } catch { defaultClauses = []; }
@@ -1026,11 +1026,11 @@ window.App = {
             requesterPhone: defaultLawyer?.phone || '-',
             clausesJson: JSON.stringify(defaultClauses),
             extraFieldsJson: '{}',
-            closingPrayer: tpl.defaultClosingText || 'ควรมิควรแล้วแต่จะโปรด',
+            closingPrayer: tpl.formCode === '(๔)' ? 'ควรมิควรแล้วแต่จะโปรด' : window.CourtRenderer.normalizeClosingPrayer(tpl.defaultClosingText),
             signerName: defaultLawyer?.fullName || '',
             signerRole: lawCase?.lawyerRole || 'ทนายความ',
             drafterName: defaultLawyer?.fullName || '',
-            typistName: clerk?.fullName || 'นายชาญณรงค์ ผ่องแผ้ว',
+            typistName: clerk?.fullName || '',
             signatureImageBase64: defaultLawyer?.signatureDataUrl || '',
             drafterSignatureBase64: defaultLawyer?.signatureDataUrl || '',
             typistSignatureBase64: clerk?.signatureDataUrl || '',
@@ -1107,9 +1107,12 @@ window.App = {
         setVal('edRequesterPostalCode', doc.requesterPostalCode || '');
         setVal('edRequesterPhone', doc.requesterPhone || '');
         setVal('edSignerName', doc.signerName || '');
-        setVal('edSignerRole', doc.signerRole || '');
+        setVal('edSignerRole', (doc.signerRole || '').replaceAll('(ผู้จัดทำร่างหมายเรียก)', '').trim());
         setVal('edDrafterName', doc.drafterName || '');
         setVal('edTypistName', doc.typistName || '');
+        const legacyClosing = ['เพื่อดำเนินกระบวนพิจารณาต่อไปตามหน้าที่ในกฎหมาย', 'ซึ่งเป็นวันสืบพยานด้วย'];
+        setVal('edClosingPrayer', doc.formCode === '(๔)' && !extra.CustomClosingPrayer && legacyClosing.includes((doc.closingPrayer || '').trim())
+            ? 'ควรมิควรแล้วแต่จะโปรด' : (doc.closingPrayer || 'ควรมิควรแล้วแต่จะโปรด'));
 
         const chk = document.getElementById('edUseThaiNumerals');
         if (chk) chk.checked = doc.useThaiNumerals !== false;
@@ -1124,11 +1127,12 @@ window.App = {
             if (typeof extra.ShowPermission === 'boolean') {
                 showPermEl.checked = extra.ShowPermission;
             } else {
-                showPermEl.checked = Boolean(extractedPerm) || (doc.formCode === '(๗)');
+                showPermEl.checked = false;
             }
         }
         if (permTextEl) {
-            permTextEl.value = extra.PermissionText || extractedPerm || 'ขอศาลได้โปรดอนุญาต';
+            permTextEl.value = (typeof extra.PermissionText === 'string' && extra.PermissionText.trim() && extra.PermissionText !== '[object Object]')
+                ? extra.PermissionText : (extractedPerm?.extractedText || 'ขอศาลได้โปรดอนุญาต');
         }
 
         // Load Electronic vs Wet Signature mode & individual toggles
@@ -1365,51 +1369,7 @@ window.App = {
     },
 
     quickFillProfile(type) {
-        const lawCase = this.state.cases.find(c => c.id === Number(this.state.currentCaseId));
-        let p = null;
-        let statusText = '';
-
-        if (type === 'LAWYER_PLAINTIFF') {
-            p = this.state.lawyers[0];
-            statusText = 'ทนายโจทก์';
-        } else if (type === 'LAWYER_DEFENDANT') {
-            p = this.state.lawyers[1] || this.state.lawyers[0];
-            statusText = lawCase?.representingPartyOrder ? `ทนาย${lawCase.representingPartyOrder}` : 'ทนายจำเลย';
-        } else if (type === 'CLIENT') {
-            const isPl = lawCase?.lawyerRole?.includes('โจทก์');
-            document.getElementById('edRequesterFullName').value = isPl ? (lawCase?.plaintiffName || '') : 'นายแพทย์อัครเดช บุญเย็น';
-            document.getElementById('edRequesterStatus').value = isPl ? 'โจทก์' : (lawCase?.representingPartyOrder || 'จำเลยที่ ๒');
-            document.getElementById('edSignerName').value = document.getElementById('edRequesterFullName').value;
-            document.getElementById('edSignerRole').value = document.getElementById('edRequesterStatus').value;
-            this.syncEditorToPreview();
-            this.showToast('ดึงข้อมูลลูกความลงแบบพิมพ์ศาลแล้ว');
-            return;
-        }
-
-        if (p) {
-            document.getElementById('edRequesterFullName').value = p.fullName;
-            document.getElementById('edRequesterStatus').value = statusText;
-            document.getElementById('edRequesterCitizenId').value = p.citizenId;
-            document.getElementById('edRequesterOccupation').value = p.occupation;
-            document.getElementById('edRequesterAge').value = p.age;
-            document.getElementById('edRequesterHouseNo').value = p.houseNo;
-            document.getElementById('edRequesterMoo').value = p.moo;
-            document.getElementById('edRequesterRoad').value = p.road;
-            document.getElementById('edRequesterSubDistrict').value = p.subDistrict;
-            document.getElementById('edRequesterDistrict').value = p.district;
-            document.getElementById('edRequesterProvince').value = p.province;
-            document.getElementById('edRequesterPostalCode').value = p.postalCode;
-            document.getElementById('edRequesterPhone').value = p.phone;
-            document.getElementById('edSignerName').value = p.fullName;
-            document.getElementById('edSignerRole').value = statusText;
-            document.getElementById('edDrafterName').value = p.fullName;
-            if (this.state.currentDoc) {
-                this.state.currentDoc.signatureImageBase64 = p.signatureDataUrl;
-                this.state.currentDoc.drafterSignatureBase64 = p.signatureDataUrl;
-            }
-            this.syncEditorToPreview();
-            this.showToast(`ดึงข้อมูล ${p.fullName} (${statusText}) พร้อมลายเซ็นอิเล็กทรอนิกส์แล้ว`);
-        }
+        return window.ProfileAutofill.fill(type);
     },
 
     onSelectSignerSignature(sigId) {
@@ -1484,9 +1444,9 @@ window.App = {
             requesterPhone: getVal('edRequesterPhone'),
             clausesJson: JSON.stringify(this.state.currentClauses),
             extraFieldsJson: JSON.stringify(extra),
-            closingPrayer: base.closingPrayer || 'ควรมิควรแล้วแต่จะโปรด',
+            closingPrayer: getVal('edFormCode') === '(๔)' ? (getVal('edClosingPrayer').trim() || 'ควรมิควรแล้วแต่จะโปรด') : window.CourtRenderer.normalizeClosingPrayer(base.closingPrayer),
             signerName: getVal('edSignerName'),
-            signerRole: getVal('edSignerRole'),
+            signerRole: getVal('edSignerRole').replaceAll('(ผู้จัดทำร่างหมายเรียก)', '').trim(),
             drafterName: getVal('edDrafterName'),
             typistName: getVal('edTypistName'),
             signatureImageBase64: base.signatureImageBase64 || '',
@@ -1495,6 +1455,16 @@ window.App = {
             useThaiNumerals: document.getElementById('edUseThaiNumerals')?.checked !== false,
             status: 'ฉบับสมบูรณ์'
         };
+    },
+
+    onClosingPrayerInput() {
+        if (this.state.currentDoc) {
+            let extra = {};
+            try { extra = JSON.parse(this.state.currentDoc.extraFieldsJson || '{}'); } catch { }
+            extra.CustomClosingPrayer = true;
+            this.state.currentDoc.extraFieldsJson = JSON.stringify(extra);
+        }
+        this.syncEditorToPreview();
     },
 
     syncEditorToPreview() {
@@ -1520,6 +1490,7 @@ window.App = {
                 body: JSON.stringify(doc)
             });
             const saved = await res.json();
+            if (!res.ok) throw new Error(saved.message || 'บันทึกเอกสารไม่สำเร็จ');
             this.state.currentDoc = saved;
             await this.loadDashboardData();
             this.populateStudioDropdowns();
@@ -2223,7 +2194,8 @@ window.App = {
                     <tr>
                         <th class="p-3">ลำดับสารบัญศาล</th>
                         <th class="p-3">สำนวนคดี</th>
-                        <th class="p-3">ชื่อไฟล์เอกสาร / คำคู่ความในสำนวน</th>
+                        <th class="p-3">ชื่อคำร้อง / เอกสารในสำนวน</th>
+                        <th class="p-3">วันที่อัปโหลด</th>
                         <th class="p-3">ประเภทไฟล์</th>
                         <th class="p-3">สถานะไฟล์</th>
                         <th class="p-3">ผู้จัดเก็บ / จำนวนแผ่น</th>
@@ -2243,19 +2215,20 @@ window.App = {
                                     : `<span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[11px]">🔗 Link</span>`;
 
                         return `
-                        <tr class="hover:bg-slate-50 transition">
+                        <tr class="hover:bg-slate-50 transition" data-file-id="${f.id}">
                             <td class="p-3">
                                 <div class="font-extrabold text-slate-900">${f.formCode}</div>
-                                <div class="text-[11px] text-slate-500">${f.directoryCategoryName || meta.name}</div>
+                                <div class="text-[11px] text-slate-500">${this.escapeHtml(f.directoryCategoryName || meta.name)}</div>
                             </td>
                             <td class="p-3">
                                 <div class="font-bold text-slate-900">${lawCase ? `${lawCase.blackCaseNo}/๒๕${lawCase.blackCaseYear}` : `คดี #${f.caseId}`}</div>
                                 <div class="text-[11px] text-slate-500">${lawCase ? `${lawCase.lawyerRole}` : ''}</div>
                             </td>
                             <td class="p-3">
-                                <div class="font-bold text-slate-900">${f.fileTitle}</div>
-                                <div class="text-[11px] text-slate-500">${f.remark || ''}</div>
+                                <div class="font-bold text-slate-900">${this.escapeHtml(f.fileTitle)}</div>
+                                <div class="text-[11px] text-slate-500">${this.escapeHtml(f.remark || '')}</div>
                             </td>
+                            <td class="p-3 whitespace-nowrap">${this.formatUploadDate(f.createdAt)}</td>
                             <td class="p-3">${typeBadge}</td>
                             <td class="p-3">
                                 <div class="flex flex-col gap-1">
@@ -2268,7 +2241,7 @@ window.App = {
                                 </div>
                             </td>
                             <td class="p-3">
-                                <div class="font-semibold text-slate-800">${f.uploadedBy || '-'}</div>
+                                <div class="font-semibold text-slate-800">${this.escapeHtml(f.uploadedBy || '-')}</div>
                                 <div class="text-[11px] text-slate-500">${f.pageCount || 1} แผ่น</div>
                             </td>
                             <td class="p-3 text-right space-x-1 whitespace-nowrap">
@@ -3535,4 +3508,3 @@ window.App = {
 document.addEventListener('DOMContentLoaded', () => {
     window.App.init();
 });
-

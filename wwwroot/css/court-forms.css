@@ -164,6 +164,10 @@ body {
     flex-direction: column;
 }
 
+@media screen {
+    #studioPaperPreview > .court-page { zoom: var(--court-preview-scale, 1); transform: none; }
+}
+
 .court-page-bottom-note {
     flex-shrink: 0;
     margin-top: 8px;
@@ -362,6 +366,16 @@ body {
 }
 
 /* ช่องเลขบัตรประชาชน 13 หลักตามแบบฟอร์มศาล (ปรับขนาดกระชับพอดีบรรทัดเดียวกับชื่อและเชื้อชาติ ไม่ให้ฉีกตกบรรทัด) */
+.court-index-page { display:block; }
+.court-index-title { position:absolute; top:56mm; left:22mm; right:16mm; text-align:center; font-size:16pt; font-weight:700; }
+.court-index-page > .court-index-table { position:absolute; top:103mm; left:22mm; width:172mm; }
+.court-index-table { border-collapse:collapse; table-layout:fixed; border:1px solid #000; font-family:'Sarabun','TH SarabunPSK',sans-serif; font-size:13.5pt; line-height:1.5; color:#000; }
+.court-index-table th { height:17mm; padding:4px 7px; border:1px solid #000; text-align:center; font-weight:700; background:#fafafa; box-sizing:border-box; }
+.court-index-table td { height:10mm; padding:5px 7px; border-left:1px solid #000; border-right:1px solid #000; border-bottom:1px dashed #333; vertical-align:top; white-space:pre-wrap; overflow-wrap:anywhere; word-break:normal; box-sizing:border-box; }
+.court-index-table td:first-child,.court-index-table td:nth-child(3) { text-align:center; }
+.court-index-table td:nth-child(2),.court-index-table td:nth-child(4) { text-align:left; }
+.court-index-table tr:last-child td { border-bottom:1px solid #000; }
+
 .citizen-id-boxes {
     display: inline-flex;
     align-items: center;
@@ -428,6 +442,28 @@ body {
 }
 
 /* บรรทัดเส้นประแบบพิมพ์ศาล (ใช้ border-bottom จริงใต้ตัวอักษรทุกบรรทัด เพื่อให้พิมพ์ออกเป็นเอกสาร PDF มีเส้นประครบทุกบรรทัด ๑๐๐%) */
+.court-closing-gap {
+    height: 31px !important;
+    min-height: 31px;
+    margin: 0 !important;
+    padding: 0 !important;
+    break-after: avoid;
+}
+.court-closing-prayer {
+    height: 31px;
+    line-height: 25px;
+    text-align: center;
+    break-before: avoid;
+}
+.court-before-signature-gap {
+    height: 62px !important;
+    min-height: 62px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    break-before: avoid;
+    break-after: avoid;
+}
 .court-lined-body {
     line-height: 25px;
     font-size: 13.6pt;
@@ -629,4 +665,3 @@ body {
         border-bottom: 1.2px dotted #334155 !important;
     }
 }
-

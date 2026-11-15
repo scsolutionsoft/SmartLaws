@@ -81,6 +81,17 @@ public class WordExportService
             AppendStyledParagraph(body, "------------------------------------------------------------------------------------------------------------------------", "24", false, JustificationValues.Center);
 
             string extractedPermissionLine = "";
+            bool showPermission = false;
+            string savedPermission = "";
+            try
+            {
+                using var extra = JsonDocument.Parse(doc.ExtraFieldsJson ?? "{}");
+                showPermission = extra.RootElement.TryGetProperty("ShowPermission", out var show) && show.ValueKind == JsonValueKind.True;
+                if (extra.RootElement.TryGetProperty("PermissionText", out var text) && text.ValueKind == JsonValueKind.String)
+                    savedPermission = text.GetString() ?? "";
+                if (savedPermission == "[object Object]") savedPermission = "";
+            }
+            catch (JsonException) { }
 
             if (doc.FormCode == "(๑๕)")
             {
@@ -138,13 +149,25 @@ public class WordExportService
             }
 
             // ย่อหน้าสุดท้ายก่อน ควรมิควรแล้วแต่จะโปรด: ขอศาลได้โปรดอนุญาต (ถ้ามี)
-            if (!string.IsNullOrWhiteSpace(extractedPermissionLine))
+            if (showPermission)
             {
-                AppendStyledParagraph(body, extractedPermissionLine, "28", false, JustificationValues.Left, true);
+                var permission = !string.IsNullOrWhiteSpace(savedPermission) ? savedPermission : !string.IsNullOrWhiteSpace(extractedPermissionLine) ? extractedPermissionLine : "ขอศาลได้โปรดอนุญาต";
+                AppendStyledParagraph(body, permission, "28", false, JustificationValues.Left, true);
             }
 
             // ควรมิควรแล้วแต่จะโปรด ต้องอยู่กึ่งกลางกระดาษ แล้วเคาะไปทางขวาอีก 6 เคาะ
-            AppendStyledParagraph(body, "      " + (doc.ClosingPrayer ?? "ควรมิควรแล้วแต่จะโปรด"), "28", true, JustificationValues.Center);
+            var previousSpacing = body.Elements<Paragraph>().LastOrDefault()?.ParagraphProperties?.GetFirstChild<SpacingBetweenLines>();
+            if (previousSpacing != null) previousSpacing.After = "0";
+            body.Append(new Paragraph(new ParagraphProperties(
+                new KeepNext(), new SpacingBetweenLines { Before = "0", After = "0", Line = "465", LineRule = LineSpacingRuleValues.Exact }), new Run(new Text(" ") { Space = SpaceProcessingModeValues.Preserve })));
+            AppendStyledParagraph(body, "      " + NormalizeClosingPrayer(doc.ClosingPrayer), "28", true, JustificationValues.Center);
+            var closingProperties = body.Elements<Paragraph>().Last().ParagraphProperties!;
+            closingProperties.GetFirstChild<SpacingBetweenLines>()!.After = "0";
+            closingProperties.Append(new KeepNext());
+            for (var blankLine = 0; blankLine < 2; blankLine++)
+                body.Append(new Paragraph(new ParagraphProperties(new KeepNext(),
+                    new SpacingBetweenLines { Before = "0", After = "0", Line = "465", LineRule = LineSpacingRuleValues.Exact }),
+                    new Run(new Text(" ") { Space = SpaceProcessingModeValues.Preserve })));
 
             // การลงชื่อให้อยู่กึ่งกลางบรรทัด และต้องอยู่คนละบรรทัด
             AppendStyledParagraph(body, $"ลงชื่อ ........................................................................... {doc.SignerRole}", "28", false, JustificationValues.Center);
@@ -164,6 +187,12 @@ public class WordExportService
             mainPart.Document.Save();
         }
         return ms.ToArray();
+    }
+
+    public static string NormalizeClosingPrayer(string? text)
+    {
+        var value = text?.Trim();
+        return string.IsNullOrEmpty(value) || value == "ซึ่งเป็นวันสืบพยานด้วย" ? "ควรมิควรแล้วแต่จะโปรด" : value;
     }
 
     private static void AppendStyledParagraph(Body body, string text, string fontSizeHalfPt, bool bold, JustificationValues align, bool firstLineIndent = false)
@@ -241,4 +270,3 @@ public class WordExportService
             .Replace('5', '๕').Replace('6', '๖').Replace('7', '๗').Replace('8', '๘').Replace('9', '๙');
     }
 }
-

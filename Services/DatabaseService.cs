@@ -14,6 +14,12 @@ public class DatabaseService
     {
         _connectionString = configuration.GetConnectionString("DefaultConnection")
             ?? throw new InvalidOperationException("DefaultConnection is missing");
+        var pool = new SqlConnectionStringBuilder(_connectionString) {
+            MaxPoolSize = configuration.GetValue("Capacity:SqlMaxPoolSize", 200),
+            MinPoolSize = configuration.GetValue("Capacity:SqlMinPoolSize", 5),
+            ApplicationName = "SmartLaws"
+        };
+        _connectionString = pool.ConnectionString;
         _logger = logger;
     }
 
@@ -311,7 +317,8 @@ public class DatabaseService
     public static void NormalizeDocumentThaiSpacing(CaseDocument doc)
     {
         doc.DocumentTitle = WordExportService.NormalizeThaiSpacing(doc.DocumentTitle);
-        doc.ClosingPrayer = WordExportService.NormalizeThaiSpacing(doc.ClosingPrayer);
+        doc.ClosingPrayer = WordExportService.NormalizeClosingPrayer(WordExportService.NormalizeThaiSpacing(doc.ClosingPrayer));
+        doc.SignerRole = doc.SignerRole?.Replace("(ผู้จัดทำร่างหมายเรียก)", "").Trim() ?? "";
         if (!string.IsNullOrWhiteSpace(doc.ClausesJson))
         {
             try
@@ -358,14 +365,17 @@ public class DatabaseService
         {
             var before = d.ClausesJson;
             var beforeTitle = d.DocumentTitle;
+            var beforeClosing = d.ClosingPrayer;
+            var beforeRole = d.SignerRole;
             NormalizeDocumentThaiSpacing(d);
-            if (d.ClausesJson != before || d.DocumentTitle != beforeTitle)
+            if (d.ClausesJson != before || d.DocumentTitle != beforeTitle || d.ClosingPrayer != beforeClosing || d.SignerRole != beforeRole)
             {
                 await conn.ExecuteAsync(@"
                     UPDATE SL_CaseDocuments
                     SET DocumentTitle = @DocumentTitle,
                         ClausesJson = @ClausesJson,
-                        ClosingPrayer = @ClosingPrayer
+                        ClosingPrayer = @ClosingPrayer,
+                        SignerRole = @SignerRole
                     WHERE Id = @Id", d);
             }
         }
@@ -1179,7 +1189,7 @@ public class DatabaseService
             }),
             ClosingPrayer = "ซึ่งเป็นวันสืบพยานด้วย",
             SignerName = "นายปิยะณัฐ วัชราภรณ์",
-            SignerRole = "ทนายโจทก์ (ผู้จัดทำร่างหมายเรียก)",
+            SignerRole = "ทนายโจทก์",
             DrafterName = "นายปิยะณัฐ วัชราภรณ์",
             TypistName = "นายชาญณรงค์ ผ่องแผ้ว",
             SignatureImageBase64 = sigPiyanat,
@@ -1416,4 +1426,3 @@ public class DatabaseService
         }
     }
 }
-

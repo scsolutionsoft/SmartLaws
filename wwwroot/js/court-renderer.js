@@ -73,36 +73,16 @@ window.CourtRenderer = {
         }).join('\n');
     },
 
-    // นับความยาวตัวอักษรแนวนอนจริงของภาษาไทย (ไม่นับสระบน-ล่าง และวรรณยุกต์ที่ไม่กินความกว้างแนวนอน และถ่วงน้ำหนักตัวอักษรไทยที่กว้างพิเศษ เช่น ำ, ฎ, ฏ, ฐ, ญ, ฒ, พ, ศ และตัวเลขไทย)
+    // นับความยาวตัวอักษรแนวนอนจริงของภาษาไทย (ไม่นับสระบน-ล่าง และวรรณยุกต์ที่ไม่กินความกว้างแนวนอน)
     getThaiVisualLength(str) {
         if (!str) return 0;
-        const base = String(str).replace(/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u200B]/g, '');
-        let units = 0;
-        for (let i = 0; i < base.length; i++) {
-            const ch = base[i];
-            if (ch === 'ำ') {
-                units += 1.38;
-            } else if (/[0-9๐-๙]/.test(ch)) {
-                units += 1.24;
-            } else if (/[ฒณฌญฎฏฐฑพฟฬฮฤฦศษ]/.test(ch)) {
-                units += 1.18;
-            } else if (/[A-Z]/.test(ch)) {
-                units += 1.25;
-            } else if (ch === ' ') {
-                units += 0.65;
-            } else {
-                units += 1.0;
-            }
-        }
-        return units;
+        return String(str).replace(/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u200B]/g, '').length;
     },
 
-    // วัดความกว้างพิกเซลจริงของข้อความด้วยฟอนต์ Sarabun 14pt (เผื่อระยะปลอดภัยสำหรับ PDF Print Engine ไม่ให้ตัดขอบขวาเด็ดขาด)
+    // วัดความกว้างพิกเซลจริงของข้อความด้วยฟอนต์ Sarabun 14pt บน HTML5 Canvas เพื่อให้จัดข้อความเต็มบรรทัดพอดี
     measureThaiTextPx(text, isBold = false) {
         if (!text) return 0;
-        const weightedUnits = this.getThaiVisualLength(text);
-        const unitPx = isBold ? 10.9 : 10.3;
-        const conservativePx = weightedUnits * unitPx;
+        const fallbackPx = this.getThaiVisualLength(text) * (isBold ? 9.2 : 8.7);
         try {
             if (!this._measureCanvas && typeof document !== 'undefined') {
                 this._measureCanvas = document.createElement('canvas');
@@ -110,43 +90,44 @@ window.CourtRenderer = {
             if (this._measureCanvas) {
                 const ctx = this._measureCanvas.getContext('2d');
                 ctx.font = `${isBold ? '700' : '400'} 14pt Sarabun, sans-serif`;
-                const measured = ctx.measureText(text).width * 1.05; // เผื่อ 5% สำหรับความแตกต่างระหว่าง Canvas กับ PDF Print
-                return Math.max(measured, conservativePx);
+                const measured = ctx.measureText(text).width;
+                return Math.max(measured, fallbackPx * 0.94);
             }
         } catch {
             // fallback
         }
-        return conservativePx;
+        return fallbackPx;
     },
 
-    // แยกคำภาษาไทยตามระบบภาษาไทย (Intl.Segmenter 'th') พร้อมล็อกกลุ่มตัวเลข ตัวเงิน วันเดือนปี และคำเฉพาะทางกฎหมายไม่ให้ฉีกแยกบรรทัดเด็ดขาด
+    // แยกคำภาษาไทยตามระบบภาษาไทย:
+    // 1. จัดให้เต็มบรรทัดก่อน แล้วพิจารณาคำฉีก โดยฉีกคำประสมออกเป็นคำย่อยที่มีความหมายตามพจนานุกรมภาษาไทย (Intl.Segmenter 'th')
+    // 2. ยกเว้นตัวเลขที่เป็นตัวเงิน/รหัสตัวเลข (เช่น ๑๕๐,๐๐๐, ๘,๑๒๕, ๑๕๘,๑๒๕, ๙๔/๙๓) ห้ามฉีกกลางตัวเลขเด็ดขาด
+    // 3. วันเดือนปี แบ่งออกเป็นส่วน "วัน" (เช่น วันที่ ๑๑, วันที่ ๑๒) / "เดือน" (เช่น พฤศจิกายน, มกราคม) / "ปี" (เช่น พ.ศ. ๒๕๖๕, ๒๕๖๕) เพื่อให้ตัดแบ่งระหว่าง วัน-เดือน-ปี ได้อย่างถูกต้องตามรูปแบบภาษาไทย
     tokenizeThaiLineText(text) {
         const clean = this.normalizeThaiSpacing(text);
         if (!clean) return [];
 
         const thaiMonths = '(?:มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\\.ค\\.|ก\\.พ\\.|มี\\.ค\\.|เม\\.ย\\.|พ\\.ค\\.|มิ\\.ย\\.|ก\\.ค\\.|ส\\.ค\\.|ก\\.ย\\.|ต\\.ค\\.|พ\\.ย\\.|ธ\\.ค\\.)';
-        const thaiUnits = '(?:บาทถ้วน|บาท|สตางค์|เดือน|ปี|วัน|คน|ปาก|ฉบับ|แปลง|นัด|ข้อ|ไร่|งาน|ตารางวา|กิโลเมตร)';
 
-        // กลุ่มคำที่ห้ามฉีกแยกบรรทัดเด็ดขาด (Atomic Non-Breaking Legal Tokens):
-        // 1. วันเดือนปีเต็มรูปแบบ เช่น "เมื่อวันที่ ๑๑ พฤศจิกายน ๒๕๖๕", "ภายในวันที่ ๑๒ มกราคม ๒๕๖๖", "วันที่ ๑๘ กุมภาพันธ์ ๒๕๖๙", "เมื่อวันที่ ๑๕ เดือน กุมภาพันธ์ พ.ศ. ๒๕๖๕"
-        // 2. จำนวนเงินและตัวเลขพร้อมหน่วย เช่น "จำนวน ๑๕๐,๐๐๐ บาท", "๑๕๐,๐๐๐ บาท", "๘,๑๒๕ บาท", "๑๕๘,๑๒๕ บาท", "ร้อยละ ๕ ต่อปี", "๑๓ เดือน", "๑๕ วัน"
-        // 3. เลขที่เอกสาร/โฉนด/มาตรา เช่น "(น.ส. ๓ ก.)", "เลขที่ ๙๔/๙๓", "มาตรา ๓๔๑", "พ.ศ. ๒๕๖๕"
-        // 4. คำประสมทางกฎหมายที่ห้ามฉีกกลางคำ เช่น "หนังสือรับรองการทำประโยชน์", "สัญญากู้ยืมเงิน", "เอกสารท้ายคำฟ้อง", "ภายในวันที่", "เมื่อวันที่", "ตั้งแต่วันที่"
+        // ล็อกเฉพาะหน่วยที่ห้ามฉีกกลางหน่วย:
+        // - ส่วน "วัน": วันที่ ๑๑, วันที่ ๑๒, วันที่ ๖
+        // - ส่วน "เดือน": เดือน มกราคม, พฤศจิกายน, มกราคม
+        // - ส่วน "ปี": พ.ศ. ๒๕๖๕, พุทธศักราช ๒๕๖๙, พ.ศ. ๒๕๒๗
+        // - ตัวเลขที่เป็นตัวเงินและรหัสตัวเลข: ๑๕๐,๐๐๐, ๑๕๘,๑๒๕, ๘,๑๒๕, ๙๔/๙๓, ๐๘๔-๑๘๕๖๔๘๓
+        // - เลขมาตรา/ข้อ/คำย่อสั้น: (น.ส. ๓ ก.), เลขที่ ๙๔/๙๓, มาตรา ๓๔๑, หมู่ที่ ๔, ต.ศรีสำราญ, อ.วังหิน, จ.ศรีสะเกษ
         const atomicPattern = new RegExp(
             '(' +
-            `(?:เมื่อ|ภายใน|ตั้งแต่|นับแต่|ถึง|ใน)?วันที่\\s*[0-9๐-๙]+(?:\\s*เดือน)?\\s*${thaiMonths}(?:\\s*(?:พ\\.ศ\\.|พุทธศักราช)?\\s*[0-9๐-๙]{2,4})?` +
+            `วันที่\\s*[0-9๐-๙]+` +
             '|' +
-            `(?:เมื่อ|ภายใน|ตั้งแต่|นับแต่|ถึง)?วันที่\\s*[0-9๐-๙]+` +
+            `(?:เดือน\\s*)?${thaiMonths}` +
             '|' +
-            `${thaiMonths}\\s*(?:พ\\.ศ\\.\\s*)?[0-9๐-๙]{2,4}` +
+            `(?:พ\\.ศ\\.|พุทธศักราช)\\s*[0-9๐-๙]{2,4}` +
             '|' +
-            `(?:จำนวน(?:เงิน)?\\s*)?[0-9๐-๙]+(?:[,./-][0-9๐-๙]+)*\\s*${thaiUnits}` +
+            `\\(น\\.ส\\.\\s*[0-9๐-๙]+\\s*ก\\.\\)` +
             '|' +
-            `ร้อยละ\\s*[0-9๐-๙]+(?:\\.[0-9๐-๙]+)?(?:\\s*ต่อปี|\\s*ต่อเดือน)?` +
+            `(?:เลขที่|หมู่ที่|มาตรา|ม\\.|ข้อ)\\s*[0-9๐-๙]+(?:[,./-][0-9๐-๙]+)*` +
             '|' +
-            `(?:เลขที่|หมู่ที่|ซอย|มาตรา|ม\\.|พ\\.ศ\\.|ที่)\\s*[0-9๐-๙]+(?:[,./-][0-9๐-๙]+)*` +
-            '|' +
-            `\\([^)]{1,26}\\)|(?:หนังสือรับรองการทำประโยชน์|สัญญากู้ยืมเงิน|สัญญากู้ยืม|เอกสารท้ายคำฟ้อง|ประมวลกฎหมายอาญา|ประมวลกฎหมายแพ่งและพาณิชย์|ประมวลกฎหมายวิธีพิจารณาความอาญา|ประมวลกฎหมายวิธีพิจารณาความแพ่ง|ประโยชน์แห่งความสงสัย|ครบถ้วนแล้ว|ชำระเงินคืนให้โจทก์)` +
+            `ร้อยละ\\s*[0-9๐-๙]+(?:\\.[0-9๐-๙]+)?` +
             '|' +
             `(?:ต|อ|จ|นพ|รพ|สภ|น\\.ส|ด\\.ช|ด\\.ญ|พล\\.ต\\.อ|พล\\.ต\\.ท|พล\\.ต\\.ต|พ\\.ต\\.อ|พ\\.ต\\.ท|พ\\.ต\\.ต|ร\\.ต\\.อ)\\.[ก-ฮะ-์]+` +
             '|' +
@@ -204,16 +185,18 @@ window.CourtRenderer = {
         return tokens.map(tok => tok === ' ' ? ' ' : `<span class="court-nowrap-token">${tok}</span><wbr>`).join('');
     },
 
-    // จัดวางย่อหน้าภาษาไทยลงทีละบรรทัดตามความกว้างจริงของกระดาษแบบพิมพ์ศาล A4 (172mm)
-    // โดยเคาะวรรค ๑ เคาะตามระบบภาษาไทย ไม่ฉีกตัวเลข/ตัวเงิน/วันเดือนปี และปรับขนาดอักษรพอดีบรรทัดไม่ให้ตัดขอบด้านขวาเด็ดขาด
+    // จัดวางย่อหน้าภาษาไทยลงทีละบรรทัดตามความกว้างจริงของกระดาษแบบพิมพ์ศาล A4 (172mm = 650px):
+    // 1. จัดให้เต็มบรรทัดก่อน แล้วจึงพิจารณาคำฉีก (ฉีกคำได้แต่ให้มีความหมายตามพจนานุกรมภาษาไทย)
+    // 2. ยกเว้นตัวเลขที่เป็นตัวเงินห้ามฉีกกลางตัวเลข และวันเดือนปีแบ่งเป็น วัน / เดือน / ปี
+    // 3. เกลี่ยระยะตัวอักษรในบรรทัดที่ไม่ใช่บรรทัดสุดท้ายให้เต็มเส้นประอย่างสวยงามโดยไม่ถ่างช่องว่างระหว่างคำ
     layoutParagraphIntoThaiLines(title, rawText, isIndented = true) {
         const cleanTitle = this.normalizeThaiSpacing(title || '');
         const cleanText = this.normalizeThaiSpacing(rawText || '');
         const tokens = this.tokenizeThaiLineText(cleanText);
 
-        const maxFullLinePx = 568; // ความกว้างปลอดภัยบนบรรทัดเส้นประ (ไม่ล้นขอบขวาทั้งบนหน้าจอและตอนสั่งพิมพ์ PDF)
-        const maxIndentedLinePx = 528; // ความกว้างบรรทัดแรกที่มีย่อหน้า 2.5rem (40px)
-        const flexSqueezeAllowancePx = 26; // อนุญาตให้บีบช่องไฟ/ลดขนาดอักษรเล็กน้อยได้ถึง 26px เพื่อป้องกันการฉีกกลุ่มวันเดือนปีหรือจำนวนเงิน
+        const maxFullLinePx = 626; // ความกว้างมาตรฐานของบรรทัดเส้นประ (จากความกว้างเต็ม 650px)
+        const maxIndentedLinePx = 586; // ความกว้างบรรทัดแรกที่มีย่อหน้า 2.5rem (40px -> 650 - 40 = 610px)
+        const flexSqueezeAllowancePx = 22; // อนุญาตให้ดึงคำถัดไปขึ้นมาเติมให้เต็มบรรทัดได้อีก 22px แล้วบีบช่องไฟเล็กน้อย
 
         const lines = [];
         let isFirstLine = true;
@@ -225,18 +208,30 @@ window.CourtRenderer = {
         let currentHtml = '';
         let currentSqueezeStyle = '';
 
-        const flushLine = () => {
+        const flushLine = (isLastLine = false) => {
             const trimmedPlain = currentPlain.trimEnd();
             const trimmedHtml = currentHtml.replace(/\s+$/, '');
             const fullLinePlain = (isFirstLine ? titlePrefixPlain : '') + trimmedPlain;
-            const fullLinePx = this.measureThaiTextPx(fullLinePlain, false);
+            const bodyPx = this.measureThaiTextPx(trimmedPlain, false);
+            const fullLinePx = (isFirstLine ? titlePrefixPx : 0) + bodyPx;
             const effectiveLimit = (isFirstLine && isIndented) ? maxIndentedLinePx : maxFullLinePx;
 
             let autoFitStyle = currentSqueezeStyle;
-            if (fullLinePx > effectiveLimit + 10) {
-                autoFitStyle = 'font-size: 12.6pt; letter-spacing: -0.25px;';
-            } else if (fullLinePx > effectiveLimit - 12 && !autoFitStyle) {
-                autoFitStyle = 'font-size: 13.3pt; letter-spacing: -0.12px;';
+            if (fullLinePx > effectiveLimit + 12) {
+                autoFitStyle = 'font-size: 13.3pt; letter-spacing: -0.18px;';
+            } else if (fullLinePx > effectiveLimit + 2) {
+                autoFitStyle = 'font-size: 13.6pt; letter-spacing: -0.1px;';
+            } else if (!isLastLine && fullLinePx < effectiveLimit - 4 && fullLinePx >= effectiveLimit * 0.78) {
+                // กรณีไม่ใช่บรรทัดสุดท้ายของย่อหน้า ให้เกลี่ยช่องไฟละเอียดเพื่อให้ข้อความเต็มบรรทัดพอดีตามแบบพิมพ์ศาล
+                const gapPx = effectiveLimit - fullLinePx;
+                const charCount = Math.max(25, this.getThaiVisualLength(fullLinePlain));
+                const spaceCount = (fullLinePlain.match(/ /g) || []).length;
+                const addLetterPx = Math.min(0.45, +(gapPx / (charCount + spaceCount * 3)).toFixed(2));
+                const remainingGap = Math.max(0, gapPx - addLetterPx * charCount);
+                const addWordPx = spaceCount > 0 ? Math.min(2.8, +(remainingGap / spaceCount).toFixed(2)) : 0;
+                if (addLetterPx > 0.04 || addWordPx > 0.2) {
+                    autoFitStyle = `letter-spacing: ${addLetterPx}px; word-spacing: ${addWordPx}px;`;
+                }
             }
 
             lines.push({
@@ -268,14 +263,14 @@ window.CourtRenderer = {
             if (candidatePx <= currentLimitPx || currentPlain.length === 0) {
                 currentPlain = candidatePlain;
                 currentHtml += wrappedTokHtml;
-            } else if (candidatePx <= currentLimitPx + flexSqueezeAllowancePx && /[0-9๐-๙]/.test(tok)) {
-                // กรณีเป็นตัวเลข ตัวเงิน หรือวันเดือนปี ที่เกินขอบบรรทัดเพียงเล็กน้อย ให้ปรับลดขนาดอักษร/ช่องไฟในบรรทัดนั้นเล็กน้อยเพื่อไม่ให้ฉีกคำ
+            } else if (candidatePx <= currentLimitPx + flexSqueezeAllowancePx && tok !== ' ') {
+                // ดึงคำที่มีความหมาย หรือตัวเลข/วัน/เดือน/ปี ที่เกินขอบบรรทัดเพียงเล็กน้อยขึ้นมาเติมให้เต็มบรรทัดก่อน
                 currentPlain = candidatePlain;
                 currentHtml += wrappedTokHtml;
-                currentSqueezeStyle = 'font-size: 13pt; letter-spacing: -0.2px;';
-                flushLine();
+                currentSqueezeStyle = 'font-size: 13.5pt; letter-spacing: -0.12px;';
+                flushLine(false);
             } else {
-                flushLine();
+                flushLine(false);
                 if (tok !== ' ') {
                     currentPlain = tok;
                     currentHtml = wrappedTokHtml;
@@ -284,7 +279,7 @@ window.CourtRenderer = {
         }
 
         if (currentPlain.trim().length > 0 || lines.length === 0) {
-            flushLine();
+            flushLine(true);
         }
 
         return lines;
@@ -385,8 +380,13 @@ window.CourtRenderer = {
     },
 
     // ควรมิควรแล้วแต่จะโปรด ต้องอยู่กึ่งกลางกระดาษ แล้วเคาะไปทางขวาอีก 6 เคาะ
+    normalizeClosingPrayer(text) {
+        const value = String(text || '').trim();
+        return !value || value === 'ซึ่งเป็นวันสืบพยานด้วย' ? 'ควรมิควรแล้วแต่จะโปรด' : value;
+    },
     renderClosingPrayerLine(prayerText) {
-        return `<div class="court-closing-prayer">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${prayerText || 'ควรมิควรแล้วแต่จะโปรด'}</div>`;
+        const text = this.normalizeClosingPrayer(prayerText).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        return `<div class="court-closing-gap" aria-hidden="true"></div><div class="court-closing-prayer">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${text}</div><div class="court-before-signature-gap" aria-hidden="true"></div>`;
     },
 
     // กล่องเลขคดีดำ-แดง มุมบนขวา (เหมือนกันทุกฟอร์มในโปรเจ็กต์ ตามภาพที่ 2: คดีหมายเลขดำ 1 บรรทัด / คดีหมายเลขแดง 1 บรรทัดอยู่ใต้คดีดำ ห้ามตกบรรทัด)
@@ -468,7 +468,7 @@ window.CourtRenderer = {
             ? window.App.state.batchPrintSigningMode
             : 'DOC_DEFAULT';
 
-        let signingMode = extra.SigningMode || 'ELECTRONIC';
+        let signingMode = extra.SigningMode ?? 'ELECTRONIC';
         if (batchMode === 'FORCE_WET' || batchMode === 'WET_SIGNATURE') {
             signingMode = 'WET_SIGNATURE';
         } else if (batchMode === 'FORCE_ELECTRONIC') {
@@ -521,18 +521,40 @@ window.CourtRenderer = {
     // แบบ (๑) ปกหน้าสำนวน ตาม PDF
     renderCaseCoverForm1(doc, lawCase, clauses, extra, t) {
         let rowsHtml = '';
+        const overflow = [];
+        const safe = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const note = (index) => {
+            const value = String(clauses[index]?.Content || clauses[index]?.content || '');
+            if (value.length > 32 || value.includes('\n')) {
+                overflow.push({index:index + 1, value});
+                return `ดูบันทึก ${t(index + 1)} ในใบต่อแนบ`;
+            }
+            return safe(t(value));
+        };
         for (let i = 1; i <= 9; i++) {
             const leftNo = t(i);
             const rightNo = t(i + 9);
-            const leftVal = t(clauses[i - 1]?.Content || clauses[i - 1]?.content || '');
-            const rightVal = t(clauses[i + 8]?.Content || clauses[i + 8]?.content || '');
+            const leftVal = note(i - 1);
+            const rightVal = note(i + 8);
             rowsHtml += `
                 <div style="display:flex; justify-content:space-between; gap:18px; margin-bottom:10px;">
-                    <div style="width:48%; white-space:nowrap;">${leftNo}. <span class="court-dotted-line" style="width:88%; text-align:left;">${leftVal}</span></div>
-                    <div style="width:48%; white-space:nowrap;">${rightNo}. <span class="court-dotted-line" style="width:86%; text-align:left;">${rightVal}</span></div>
+                    <div style="width:48%; min-width:0;">${leftNo}. <span class="court-dotted-line" style="width:88%; text-align:left; font-size:13pt;">${leftVal}</span></div>
+                    <div style="width:48%; min-width:0;">${rightNo}. <span class="court-dotted-line" style="width:86%; text-align:left; font-size:13pt;">${rightVal}</span></div>
                 </div>`;
         }
 
+        clauses.slice(18).forEach((item,index) => overflow.push({index:index+19,value:String(item.Content || item.content || '')}));
+        const attachments = overflow.sort((a,b) => a.index-b.index).flatMap(item => {
+            // Reserve space for explicit newlines as well as naturally wrapped text.
+            const chunks = []; let chunk = '', weight = 0;
+            for (const part of new Intl.Segmenter('th',{granularity:'grapheme'}).segment(item.value)) {
+                chunk += part.segment; weight += part.segment.includes('\n') ? 40 : part.segment.length;
+                if (weight >= 700) {chunks.push(chunk); chunk=''; weight=0;}
+            }
+            if (chunk) chunks.push(chunk);
+            const pages = chunks.map((text,index) => `<div class="court-page"><h3>ใบต่อบันทึกปกสำนวน — รายการ ${t(item.index)}${index ? ' (ต่อ)' : ''}</h3><div style="white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7;">${safe(t(text))}</div></div>`);
+            return pages;
+        }).join('');
         return `
         <div class="court-page">
             ${this.renderCommonHeader(doc, lawCase, t, { forCourtUse: true, hideDateRow: true })}
@@ -541,11 +563,11 @@ window.CourtRenderer = {
             </div>
             <div style="margin:10px 0;">
                 ทุนทรัพย์ <span class="court-dotted-line" style="min-width:230px;">${t(lawCase?.claimAmount ? lawCase.claimAmount.toLocaleString() + ' บาท' : '-')}</span>
-                เอกสารเก็บเลขที่ <span class="court-dotted-line" style="min-width:210px;">${t(extra.ArchiveNo || '')}</span>
+                เอกสารเก็บเลขที่ <span class="court-dotted-line" style="min-width:210px;">${t(extra.ArchiveNo ?? '')}</span>
             </div>
             <div style="text-align:center; font-weight:700; text-decoration:underline; margin:16px 0 12px 0;">บันทึก</div>
             <div>${rowsHtml}</div>
-        </div>`;
+        </div>${attachments}`;
     },
 
     // แบบ (๒) หน้าสำนวน ตาม PDF
@@ -556,13 +578,11 @@ window.CourtRenderer = {
             <div style="margin:6px 0;">เรื่อง <span class="court-dotted-line" style="width:92%; text-align:left;">${t(lawCase?.chargeOrCauseOfAction || '')}</span></div>
             <div style="margin:6px 0;">ทุนทรัพย์ <span class="court-dotted-line" style="width:88%; text-align:left;">${t(lawCase?.claimAmount ? lawCase.claimAmount.toLocaleString() + ' บาท' : '-')}</span></div>
             <div style="margin:6px 0;">ฟ้องหรือร้องวันที่ <span class="court-dotted-line" style="min-width:60px;">${t(doc.docDay || '')}</span> เดือน <span class="court-dotted-line" style="min-width:160px;">${doc.docMonth || ''}</span> พ.ศ. ๒๕<span class="court-dotted-line" style="min-width:50px;">${t(doc.docYear || '')}</span></div>
-            <div style="margin:6px 0;">นัดชี้สองสถานวันที่ <span class="court-dotted-line" style="min-width:60px;">&nbsp;</span> เดือน <span class="court-dotted-line" style="min-width:160px;">&nbsp;</span> พ.ศ. ๒๕<span class="court-dotted-line" style="min-width:50px;">&nbsp;</span></div>
-            <div style="margin:6px 0;">พิจารณาหรือไต่สวนครั้งแรกวันที่ <span class="court-dotted-line" style="min-width:60px;">&nbsp;</span> เดือน <span class="court-dotted-line" style="min-width:140px;">&nbsp;</span> พ.ศ. ๒๕<span class="court-dotted-line" style="min-width:50px;">&nbsp;</span></div>
-            <div style="margin:6px 0;">พิจารณาหรือไต่สวนเสร็จสำนวนวันที่ <span class="court-dotted-line" style="min-width:60px;">&nbsp;</span> เดือน <span class="court-dotted-line" style="min-width:130px;">&nbsp;</span> พ.ศ. ๒๕<span class="court-dotted-line" style="min-width:50px;">&nbsp;</span></div>
+            ${[['IssueDate','นัดชี้สองสถานวันที่'],['FirstHearingDate','พิจารณาหรือไต่สวนครั้งแรกวันที่'],['EndHearingDate','พิจารณาหรือไต่สวนเสร็จสำนวนวันที่']].map(([key,label]) => `<div style="margin:6px 0;">${label} <span class="court-dotted-line" style="min-width:280px;">${t(extra[key] || '')}</span></div>`).join('')}
 
             <div style="text-align:center; font-weight:700; text-decoration:underline; margin:16px 0 10px 0;">บันทึก</div>
-            <div>วันที่ <span class="court-dotted-line" style="min-width:60px;">&nbsp;</span> เดือน <span class="court-dotted-line" style="min-width:160px;">&nbsp;</span> พ.ศ. ๒๕<span class="court-dotted-line" style="min-width:50px;">&nbsp;</span> ศาลได้อ่าน</div>
-            <div>คำพิพากษาหรือคำสั่ง <span class="court-dotted-line" style="min-width:280px;">&nbsp;</span> ในคดีเรื่องนี้ ให้คู่ความฟังแล้ว จึงได้ให้ลงลายมือชื่อไว้เป็นสำคัญ</div>
+            <div>วันที่ <span class="court-dotted-line" style="min-width:280px;">${t(extra.JudgmentReadDate ?? '')}</span> ศาลได้อ่าน</div>
+            <div>คำพิพากษาหรือคำสั่ง <span class="court-dotted-line" style="min-width:280px;">${t(extra.JudgmentOrder ?? '')}</span> ในคดีเรื่องนี้ ให้คู่ความฟังแล้ว จึงได้ให้ลงลายมือชื่อไว้เป็นสำคัญ</div>
 
             <div style="margin-top:18px;">
                 ${this.renderCenteredSigRow('', '', 'โจทก์')}
@@ -575,17 +595,44 @@ window.CourtRenderer = {
 
     // แบบ (๓) สารบาญ ตาม PDF
     renderIndexForm3(doc, lawCase, items, extra, t) {
-        const rows = Array.isArray(items) ? [...items] : [];
-        while (rows.length < 15) {
-            rows.push({ OrderNo: '', WitnessNameAndDesc: '', AddressText: '', Note: '' });
-        }
-        return `
-        <div class="court-page">
+        // Decode values already escaped by the editor, then use textContent for every cell.
+        const decode = value => { const el=document.createElement('textarea'); el.innerHTML=String(value ?? ''); return el.value; };
+        const rows = (Array.isArray(items) ? items : []).map(r => [r.OrderNo ?? r.orderNo ?? '',r.WitnessNameAndDesc ?? r.witnessNameAndDesc ?? r.Content ?? '',r.AddressText ?? r.addressText ?? '',r.Note ?? r.note ?? ''].map(v=>decode(t(v))));
+        const rowHtml = row => {
+            const tr=document.createElement('tr');
+            row.forEach(value=>{const td=document.createElement('td'); td.textContent=value || '\u00a0'; tr.append(td);});
+            return tr.outerHTML;
+        };
+        // Measure with the same font, column widths and wrapping rules used by the printed table.
+        const probe=document.createElement('table');
+        probe.className='court-index-table';
+        probe.style.cssText='position:fixed;left:-10000px;top:0;visibility:hidden;width:172mm;';
+        const columns='<colgroup><col style="width:12%"><col style="width:56%"><col style="width:16%"><col style="width:16%"></colgroup>';
+        document.body.append(probe);
+        const height=row=>{probe.innerHTML=columns+`<tbody>${rowHtml(row)}</tbody>`;return probe.getBoundingClientRect().height;};
+        const pages=[]; let current=[], used=0;
+        const limit=156 * 96 / 25.4;
+        const blank=['','','',''];
+        const finish=()=>{const blankHeight=height(blank); while(used+blankHeight<=limit && current.length<15){current.push(blank);used+=blankHeight;} pages.push(current);current=[];used=0;};
+        const place=row=>{
+            const h=height(row);
+            if(h>limit && row.some(v=>Array.from(v).length>1)) {
+                // Oversized cells continue on subsequent rows/pages without losing text.
+                const halves=row.map((v,i)=>{if((i===0 || i===2) && v.length<=30)return [v,''];const parts=Array.from(new Intl.Segmenter('th',{granularity:'grapheme'}).segment(v),p=>p.segment);const mid=Math.ceil(parts.length/2);return [parts.slice(0,mid).join(''),parts.slice(mid).join('')];});
+                place(halves.map(p=>p[0]));place(halves.map(p=>p[1]));return;
+            }
+            if(current.length && (used+h>limit || current.length>=15)) finish();
+            current.push(row);used+=h;
+        };
+        try { rows.forEach(place); if(current.length || !pages.length) finish(); } finally {probe.remove();}
+        return pages.map((page,index)=>`
+        <div class="court-page court-index-page">
             <div class="court-punch-hole"></div>
             <div style="position:absolute; top:11mm; right:14mm; font-size:13pt; text-decoration:underline; font-weight:600;">สำหรับศาลใช้</div>
             <div style="font-weight:700; font-size:14pt; margin-left:8mm;">(๓)</div>
-            <div style="text-align:center; font-weight:700; font-size:16pt; margin-bottom:12px;">สารบาญ</div>
-            <table class="court-witness-table">
+            <div class="court-index-title">สารบาญ${index ? ' (ต่อ)' : ''}</div>
+            <table class="court-index-table">
+                ${columns}
                 <thead>
                     <tr>
                         <th style="width:12%;">อันดับ</th>
@@ -595,17 +642,10 @@ window.CourtRenderer = {
                     </tr>
                 </thead>
                 <tbody>
-                    ${rows.map(r => `
-                        <tr>
-                            <td style="text-align:center;">${r.OrderNo ? t(r.OrderNo) : '&nbsp;'}</td>
-                            <td>${t(r.WitnessNameAndDesc || r.Content || '') || '&nbsp;'}</td>
-                            <td style="text-align:center;">${t(r.AddressText || '') || '&nbsp;'}</td>
-                            <td style="text-align:center;">${t(r.Note || '') || '&nbsp;'}</td>
-                        </tr>
-                    `).join('')}
+                    ${page.map(rowHtml).join('')}
                 </tbody>
             </table>
-        </div>`;
+        </div>`).join('');
     },
 
     // แบบ (๘) บัญชีทรัพย์ ตาม PDF
@@ -642,8 +682,8 @@ window.CourtRenderer = {
                             <td>${t(r.WitnessNameAndDesc || r.Content || '') || '&nbsp;'}</td>
                             <td style="text-align:center;">${t(r.AddressText || '') || '&nbsp;'}</td>
                             <td style="text-align:right;">${t(r.Note || '') || '&nbsp;'}</td>
-                            <td style="text-align:center;">-</td>
-                            <td>&nbsp;</td>
+                            <td style="text-align:center;">${t(r.Satang || '') || '&nbsp;'}</td>
+                            <td>${t(r.Remark || '') || '&nbsp;'}</td>
                         </tr>
                     `).join('')}
                     <tr>
@@ -688,12 +728,12 @@ window.CourtRenderer = {
             }
         }
 
-        const shouldShow = extra.ShowPermission !== undefined
-            ? Boolean(extra.ShowPermission)
-            : hasPermissionLine;
+        const shouldShow = extra.ShowPermission === true;
+        const savedPermission = typeof extra.PermissionText === 'string' && extra.PermissionText !== '[object Object]'
+            ? extra.PermissionText.trim() : '';
 
         const finalPermissionText = shouldShow
-            ? (extra.PermissionText || extractedText || 'ขอศาลได้โปรดอนุญาต')
+            ? (savedPermission || extractedText || 'ขอศาลได้โปรดอนุญาต')
             : '';
 
         return {
@@ -712,64 +752,6 @@ window.CourtRenderer = {
 
         const { cleanedClauses, permissionText } = this.extractPermissionParagraph(clauses, extra);
 
-        // จำนวนบรรทัดข้อ ๑ ในหน้าแรกให้ตรงกับแบบฟอร์ม PDF ต้นฉบับ:
-        // แบบ (๔) คำฟ้อง = 3 บรรทัด, แบบ (๗) คำร้อง = 4 บรรทัด, แบบ (๑๑) คำให้การจำเลย = 5 บรรทัด
-        const page1MaxLines = isPlaint4 ? 3 : (isDefense11 ? 5 : 4);
-        const contPageMaxLines = 21;
-        const footerLinesCount = (permissionText ? 1 : 0) + 3 + ((doc.drafterName || doc.typistName) ? 5 : 0);
-
-        // แปลงแต่ละข้อเป็นบรรทัดที่ตัดคำตามพจนานุกรมภาษาไทย (Intl.Segmenter 'th') และเคาะวรรค ๑ เคาะตามระบบภาษาไทย
-        const allLines = [];
-        cleanedClauses.forEach(c => {
-            const title = t(this.normalizeThaiSpacing(c.ClauseTitle || c.clauseTitle || ''));
-            const rawContent = t(this.normalizeThaiSpacing(c.Content || c.content || ''));
-            const paragraphs = rawContent.split('\n').map(s => s.trim()).filter(Boolean);
-            paragraphs.forEach((p, pIdx) => {
-                const pLines = this.layoutParagraphIntoThaiLines(pIdx === 0 ? title : '', p, true);
-                allLines.push(...pLines);
-            });
-        });
-
-        // แบ่งบรรทัดลงหน้า ๑ (สูงสุด page1MaxLines บรรทัด) และส่วนที่เกินส่งไปหน้าใบต่อ (๔๐ ก.) หน้าละ contPageMaxLines บรรทัด
-        const page1Lines = allLines.slice(0, page1MaxLines);
-        const remainingLines = allLines.slice(page1MaxLines);
-        const contPages = [];
-        for (let i = 0; i < remainingLines.length; i += contPageMaxLines) {
-            contPages.push(remainingLines.slice(i, i + contPageMaxLines));
-        }
-
-        // ตรวจสอบว่าส่วนลงชื่อท้ายคำคู่ความสามารถอยู่ในหน้า ๑ ได้โดยไม่ล้นเส้นทึบก่อนหมายเหตุหรือไม่
-        const footerOnPage1 = contPages.length === 0 && (page1Lines.length + footerLinesCount <= page1MaxLines);
-        if (!footerOnPage1) {
-            // เติมเส้นประว่างให้ครบจำนวนบรรทัดมาตรฐานของหน้า ๑ (3, 4 หรือ 5 บรรทัด)
-            while (page1Lines.length < page1MaxLines) {
-                page1Lines.push({ indent: false, plain: '', html: '&nbsp;', extraStyle: '' });
-            }
-            if (contPages.length === 0) {
-                contPages.push([]);
-            }
-        }
-
-        // ตรวจสอบหน้าใบต่อ (๔๐ ก.) หน้าสุดท้ายว่าเมื่อรวมส่วนลงชื่อท้ายคำคู่ความแล้วเกินความจุหน้าหรือไม่ หากเกินให้ตัดขึ้นหน้าใบต่อใหม่ทันทีเพื่อไม่ให้ตกหน้ากระดาษ
-        if (contPages.length > 0) {
-            const lastChunk = contPages[contPages.length - 1];
-            if (lastChunk.length + footerLinesCount > contPageMaxLines) {
-                const safeKeepCount = Math.max(1, contPageMaxLines - 2);
-                if (lastChunk.length > safeKeepCount) {
-                    const carryOver = lastChunk.splice(safeKeepCount);
-                    contPages.push(carryOver);
-                } else {
-                    contPages.push([]);
-                }
-            }
-        }
-
-        const renderLineHtml = (line) => `
-            <div class="court-thai-line" style="${line.indent ? 'padding-left: 2.5rem;' : 'padding-left: 0;'} ${line.extraStyle || ''}">
-                ${line.html}
-            </div>
-        `;
-
         // ส่วนหัวข้อมูลผู้ยื่นในหน้าแรก จัดให้ตรงตามไฟล์ PDF ต้นฉบับของแต่ละแบบพิมพ์ (แบบ ๔, แบบ ๗, แบบ ๑๑)
         // ใช้ .court-preamble-row (flex nowrap) เพื่อล็อกไม่ให้ฉีกคำตกบรรทัดตามภาพที่ 1
         let page1PreambleHtml = '';
@@ -778,13 +760,13 @@ window.CourtRenderer = {
             page1PreambleHtml = `
                 <div class="court-preamble-row">
                     <span>ข้อหาหรือฐานความผิด</span>
-                    <span class="court-dotted-line" style="flex:1; text-align:left;">${t(extra.Charge || lawCase?.chargeOrCauseOfAction || '')}</span>
+                    <span class="court-dotted-line" data-plaint-charge style="flex:1; min-width:0; white-space:pre-wrap !important; overflow:visible; overflow-wrap:anywhere; text-align:left;">${t(extra.Charge ?? lawCase?.chargeOrCauseOfAction ?? '')}</span>
                 </div>
                 <div class="court-preamble-row">
                     <span>จำนวนทุนทรัพย์</span>
-                    <span class="court-dotted-line" style="flex:3;">${t(extra.ClaimAmountBaht || (lawCase?.claimAmount ? lawCase.claimAmount.toLocaleString() : '-'))}</span>
+                    <span class="court-dotted-line" style="flex:3;">${t(extra.ClaimAmountBaht ?? (lawCase?.claimAmount ? lawCase.claimAmount.toLocaleString() : '-'))}</span>
                     <span>บาท</span>
-                    <span class="court-dotted-line" style="flex:1;">${t(extra.ClaimAmountSatang || '-')}</span>
+                    <span class="court-dotted-line" style="flex:1;">${t(extra.ClaimAmountSatang ?? '-')}</span>
                     <span>สตางค์</span>
                 </div>
                 <div class="court-preamble-row indent">
@@ -821,11 +803,11 @@ window.CourtRenderer = {
                 </div>
                 <div class="court-preamble-row">
                     <span>ขอยื่นฟ้อง</span>
-                    <span class="court-dotted-line" style="flex:1; text-align:left; font-weight:600;">${t(extra.DefName || lawCase?.defendantName || '')}</span>
+                    <span class="court-dotted-line" style="flex:1; text-align:left; font-weight:600;">${t(extra.DefName ?? lawCase?.defendantName ?? '')}</span>
                 </div>
                 <div class="court-preamble-row compact">
                     <span>เลขประจำตัวประชาชน</span>
-                    ${this.renderCitizenBoxes(extra.DefCitizenId || '', doc.useThaiNumerals !== false)}
+                    ${this.renderCitizenBoxes(extra.DefCitizenId ?? '', doc.useThaiNumerals !== false)}
                     <span>จำเลย เชื้อชาติ</span>
                     <span class="court-dotted-line" style="flex:1;">ไทย</span>
                 </div>
@@ -833,17 +815,17 @@ window.CourtRenderer = {
                     <span>สัญชาติ</span> <span class="court-dotted-line" style="flex:1;">ไทย</span>
                     <span>อาชีพ</span> <span class="court-dotted-line" style="flex:1.8;">-</span>
                     <span>อายุ</span> <span class="court-dotted-line" style="flex:0.8;">-</span> <span>ปี</span>
-                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:1.1;">${t(extra.DefHouseNo || '-')}</span>
-                    <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.7;">${t(extra.DefMoo || '-')}</span>
+                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:1.1;">${t(extra.DefHouseNo ?? '-')}</span>
+                    <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.7;">${t(extra.DefMoo ?? '-')}</span>
                 </div>
                 <div class="court-preamble-row compact">
                     <span>ถนน</span> <span class="court-dotted-line" style="flex:1;">-</span>
                     <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">-</span>
-                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DefSubDistrict || '-')}</span>
-                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DefDistrict || '-')}</span>
+                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DefSubDistrict ?? '-')}</span>
+                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DefDistrict ?? '-')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.3;">${t(extra.DefProvince || 'ศรีสะเกษ')}</span>
+                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.3;">${t(extra.DefProvince ?? 'ศรีสะเกษ')}</span>
                     <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.9;">๓๓๐๐๐</span>
                     <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1.5;">-</span>
                 </div>
@@ -939,6 +921,79 @@ window.CourtRenderer = {
             `;
         }
 
+        // Keep existing limits for forms 4/11; form 7 fills its available first-page area.
+        let page1MaxLines = isPlaint4 ? 3 : (isDefense11 ? 5 : 4);
+        // Form 7 uses the actual space above the note, keeping a quiet 16px gap.
+        // Measure with the same A4 styles as preview/print; do not stretch Thai text.
+        if (formCode === '(๗)' && typeof document !== 'undefined' && document.body) {
+            const probe = document.createElement('div');
+            probe.className = 'court-page';
+            probe.setAttribute('aria-hidden', 'true');
+            probe.style.cssText = 'position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none;zoom:1;';
+            probe.style.setProperty('padding', '15mm 16mm 16mm 22mm', 'important');
+            probe.innerHTML = `<div class="court-page-top">${this.renderCommonHeader(doc, lawCase, t, { forCourtUse:false })}${page1PreambleHtml}<div data-body-start></div></div>${this.renderBottomNoteSection(doc, lawCase, false, false)}`;
+            document.body.appendChild(probe);
+            try {
+                const start = probe.querySelector('[data-body-start]').getBoundingClientRect().top;
+                const end = probe.querySelector('.court-page-bottom-note').getBoundingClientRect().top;
+                page1MaxLines = Math.max(4, Math.floor((end - start - 16) / 31));
+            } finally { probe.remove(); }
+        }
+        const contPageMaxLines = 21;
+        const footerLinesCount = (permissionText ? 1 : 0) + 6 + ((doc.drafterName || doc.typistName) ? 5 : 0);
+
+        // แปลงแต่ละข้อเป็นบรรทัดที่ตัดคำตามพจนานุกรมภาษาไทย (Intl.Segmenter 'th') และเคาะวรรค ๑ เคาะตามระบบภาษาไทย
+        const allLines = [];
+        cleanedClauses.forEach(c => {
+            const title = t(this.normalizeThaiSpacing(c.ClauseTitle || c.clauseTitle || ''));
+            const rawContent = t(this.normalizeThaiSpacing(c.Content || c.content || ''));
+            const paragraphs = rawContent.split('\n').map(s => s.trim()).filter(Boolean);
+            paragraphs.forEach((p, pIdx) => {
+                const pLines = this.layoutParagraphIntoThaiLines(pIdx === 0 ? title : '', p, true);
+                allLines.push(...pLines);
+            });
+        });
+
+        // แบ่งบรรทัดลงหน้า ๑ (สูงสุด page1MaxLines บรรทัด) และส่วนที่เกินส่งไปหน้าใบต่อ (๔๐ ก.) หน้าละ contPageMaxLines บรรทัด
+        const page1Lines = allLines.slice(0, page1MaxLines);
+        const remainingLines = allLines.slice(page1MaxLines);
+        const contPages = [];
+        for (let i = 0; i < remainingLines.length; i += contPageMaxLines) {
+            contPages.push(remainingLines.slice(i, i + contPageMaxLines));
+        }
+
+        // ตรวจสอบว่าส่วนลงชื่อท้ายคำคู่ความสามารถอยู่ในหน้า ๑ ได้โดยไม่ล้นเส้นทึบก่อนหมายเหตุหรือไม่
+        const footerOnPage1 = contPages.length === 0 && (page1Lines.length + footerLinesCount <= page1MaxLines);
+        if (!footerOnPage1) {
+            // Fill the remaining writing area with evenly spaced dotted lines.
+            while (page1Lines.length < page1MaxLines) {
+                page1Lines.push({ indent: false, plain: '', html: '&nbsp;', extraStyle: '' });
+            }
+            if (contPages.length === 0) {
+                contPages.push([]);
+            }
+        }
+
+        // ตรวจสอบหน้าใบต่อ (๔๐ ก.) หน้าสุดท้ายว่าเมื่อรวมส่วนลงชื่อท้ายคำคู่ความแล้วเกินความจุหน้าหรือไม่ หากเกินให้ตัดขึ้นหน้าใบต่อใหม่ทันทีเพื่อไม่ให้ตกหน้ากระดาษ
+        if (contPages.length > 0) {
+            const lastChunk = contPages[contPages.length - 1];
+            if (lastChunk.length + footerLinesCount > contPageMaxLines) {
+                const safeKeepCount = Math.max(1, contPageMaxLines - 2);
+                if (lastChunk.length > safeKeepCount) {
+                    const carryOver = lastChunk.splice(safeKeepCount);
+                    contPages.push(carryOver);
+                } else {
+                    contPages.push([]);
+                }
+            }
+        }
+
+        const renderLineHtml = (line) => `
+            <div class="court-thai-line" style="${line.indent ? 'padding-left: 2.5rem;' : 'padding-left: 0;'} ${line.extraStyle || ''}">
+                ${line.html}
+            </div>
+        `;
+
         // ย่อหน้าสุดท้ายก่อน ควรมิควรแล้วแต่จะโปรด: ขอศาลได้โปรดอนุญาต (เลือกเปิด/ปิดได้)
         const permissionParagraphHtml = permissionText
             ? `<div class="court-closing-permission">${t(permissionText)}</div>`
@@ -1014,7 +1069,7 @@ window.CourtRenderer = {
             </div>
 
             <div style="margin-top:16px; text-indent:2.5rem;">
-                ข้าพเจ้าได้ยื่นสำเนาคำฟ้องโดยข้อความถูกต้องเป็นอย่างเดียวกันมาด้วย <span class="court-dotted-line" style="min-width:55px;">${t(extra.CopiesCount || '๑')}</span> ฉบับ และรอฟังคำสั่งอยู่ ถ้าไม่รอให้ถือว่าทราบแล้ว
+                ข้าพเจ้าได้ยื่นสำเนาคำฟ้องโดยข้อความถูกต้องเป็นอย่างเดียวกันมาด้วย <span class="court-dotted-line" style="min-width:55px;">${t(extra.CopiesCount ?? '๑')}</span> ฉบับ และรอฟังคำสั่งอยู่ ถ้าไม่รอให้ถือว่าทราบแล้ว
             </div>
 
             ${this.renderClosingPrayerLine(t(doc.closingPrayer || 'ควรมิควรแล้วแต่จะโปรด'))}
@@ -1030,25 +1085,25 @@ window.CourtRenderer = {
                     <span>คำฟ้องฉบับนี้ข้าพเจ้า</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(doc.drafterName || 'นายปิยะณัฐ วัชราภรณ์')}</span>
                 </div>
                 <div class="court-preamble-row compact" style="margin:4px 0;">
-                    <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(extra.DrafterCitizenId || '3730100915068', doc.useThaiNumerals !== false)}
+                    <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(extra.DrafterCitizenId ?? '3730100915068', doc.useThaiNumerals !== false)}
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>ทนายความใบอนุญาตที่</span> <span class="court-dotted-line" style="flex:1.1;">${t(extra.DrafterLicenseNo || '๗๘๓๔/๒๕๒๙')}</span>
-                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterHouseNo || '๙๐/๓')}</span>
+                    <span>ทนายความใบอนุญาตที่</span> <span class="court-dotted-line" style="flex:1.1;">${t(extra.DrafterLicenseNo ?? '๗๘๓๔/๒๕๒๙')}</span>
+                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterHouseNo ?? '๙๐/๓')}</span>
                     <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.5;">-</span>
                     <span>ถนน</span> <span class="court-dotted-line" style="flex:1.2;">ปลัดมณฑล</span>
                 </div>
                 <div class="court-preamble-row compact">
                     <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">-</span>
-                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterSubDistrict || 'เมืองเหนือ')}</span>
+                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterSubDistrict ?? 'เมืองเหนือ')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterDistrict || 'เมือง')}</span>
-                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterProvince || 'ศรีสะเกษ')}</span>
-                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterPostalCode || '๓๓๐๐๐')}</span>
+                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterDistrict ?? 'เมือง')}</span>
+                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterProvince ?? 'ศรีสะเกษ')}</span>
+                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterPostalCode ?? '๓๓๐๐๐')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterPhone || '๐๘๙-๒๘๐๒๔๕๐')}</span>
+                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterPhone ?? '๐๘๙-๒๘๐๒๔๕๐')}</span>
                     <span>โทรสาร</span> <span class="court-dotted-line" style="flex:1;">-</span>
                 </div>
                 <div class="court-preamble-row compact">
@@ -1062,21 +1117,21 @@ window.CourtRenderer = {
                     <span>คำฟ้องฉบับนี้ข้าพเจ้า</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(doc.typistName || 'นายชาญณรงค์ ผ่องแผ้ว')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.9;">${t(extra.TypistHouseNo || '๒๖๐/๑๗')}</span>
-                    <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(extra.TypistMoo || '๕')}</span>
+                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.9;">${t(extra.TypistHouseNo ?? '๒๖๐/๑๗')}</span>
+                    <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(extra.TypistMoo ?? '๕')}</span>
                     <span>ถนน</span> <span class="court-dotted-line" style="flex:1.8;">-</span>
                 </div>
                 <div class="court-preamble-row compact">
                     <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">-</span>
-                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistSubDistrict || 'หนองครก')}</span>
+                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistSubDistrict ?? 'หนองครก')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistDistrict || 'เมือง')}</span>
-                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistProvince || 'ศรีสะเกษ')}</span>
-                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.TypistPostalCode || '๓๓๐๐๐')}</span>
+                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistDistrict ?? 'เมือง')}</span>
+                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistProvince ?? 'ศรีสะเกษ')}</span>
+                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.TypistPostalCode ?? '๓๓๐๐๐')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${t(extra.TypistPhone || '๐๘๘-๗๗๗๖-๗๗๕')}</span> <span>เป็นผู้เขียนหรือพิมพ์</span>
+                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${t(extra.TypistPhone ?? '๐๘๘-๗๗๗๖-๗๗๕')}</span> <span>เป็นผู้เขียนหรือพิมพ์</span>
                 </div>
                 ${this.renderCenteredSigRow(doc.typistSignatureBase64, t(doc.typistName || ''), 'ผู้เขียนหรือพิมพ์')}
             </div>
@@ -1092,7 +1147,7 @@ window.CourtRenderer = {
             <div style="font-weight:700; font-size:15pt; margin-left:8mm; margin-bottom:12px;">คำขอท้ายคำฟ้องอาญา</div>
             <div style="text-indent:2.5rem;">
                 การที่จำเลยได้กระทำตามข้อความที่กล่าวมาในคำฟ้องนั้น ข้าพเจ้าถือว่าเป็นความผิดต่อกฎหมาย และบทมาตราดังนี้ คือ
-                <span class="court-dotted-line" style="min-width:340px;">${t(clauses[0]?.Content || clauses[0]?.content || lawCase?.chargeOrCauseOfAction || '')}</span>
+                <span class="court-dotted-line" data-criminal-legal-basis style="display:block; width:100%; text-indent:0; white-space:pre-wrap; overflow-wrap:anywhere;">${t(extra.CriminalLegalBasis ?? (clauses[0]?.Content || clauses[0]?.content || lawCase?.chargeOrCauseOfAction || ''))}</span>
             </div>
             <div style="text-indent:2.5rem; margin-top:12px;">
                 ขอให้ศาลออกหมาย <span class="court-dotted-line" style="min-width:160px;">เรียก</span> จำเลยมาพิจารณาพิพากษาลงโทษตามกฎหมาย และขอให้ศาลสั่งและบังคับจำเลยตามคำขอต่อไปนี้
@@ -1114,25 +1169,25 @@ window.CourtRenderer = {
                     <span>คำฟ้องฉบับนี้ข้าพเจ้า</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(doc.drafterName || 'นายปิยะณัฐ วัชราภรณ์')}</span>
                 </div>
                 <div class="court-preamble-row compact" style="margin:4px 0;">
-                    <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(extra.DrafterCitizenId || '3730100915068', doc.useThaiNumerals !== false)}
+                    <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(extra.DrafterCitizenId ?? '3730100915068', doc.useThaiNumerals !== false)}
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>ทนายความใบอนุญาตที่</span> <span class="court-dotted-line" style="flex:1.1;">${t(extra.DrafterLicenseNo || '๗๘๓๔/๒๕๒๙')}</span>
-                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterHouseNo || '๙๐/๓')}</span>
+                    <span>ทนายความใบอนุญาตที่</span> <span class="court-dotted-line" style="flex:1.1;">${t(extra.DrafterLicenseNo ?? '๗๘๓๔/๒๕๒๙')}</span>
+                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterHouseNo ?? '๙๐/๓')}</span>
                     <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.5;">-</span>
                     <span>ถนน</span> <span class="court-dotted-line" style="flex:1.2;">ปลัดมณฑล</span>
                 </div>
                 <div class="court-preamble-row compact">
                     <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">-</span>
-                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterSubDistrict || 'เมืองเหนือ')}</span>
+                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterSubDistrict ?? 'เมืองเหนือ')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterDistrict || 'เมือง')}</span>
-                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterProvince || 'ศรีสะเกษ')}</span>
-                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterPostalCode || '๓๓๐๐๐')}</span>
+                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterDistrict ?? 'เมือง')}</span>
+                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterProvince ?? 'ศรีสะเกษ')}</span>
+                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.DrafterPostalCode ?? '๓๓๐๐๐')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterPhone || '๐๘๙-๒๘๐๒๔๕๐')}</span>
+                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.DrafterPhone ?? '๐๘๙-๒๘๐๒๔๕๐')}</span>
                     <span>โทรสาร</span> <span class="court-dotted-line" style="flex:1;">-</span>
                 </div>
                 <div class="court-preamble-row compact">
@@ -1146,21 +1201,21 @@ window.CourtRenderer = {
                     <span>คำฟ้องฉบับนี้ข้าพเจ้า</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(doc.typistName || 'นายชาญณรงค์ ผ่องแผ้ว')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.9;">${t(extra.TypistHouseNo || '๒๖๐/๑๗')}</span>
-                    <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(extra.TypistMoo || '๕')}</span>
+                    <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.9;">${t(extra.TypistHouseNo ?? '๒๖๐/๑๗')}</span>
+                    <span>หมู่ที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(extra.TypistMoo ?? '๕')}</span>
                     <span>ถนน</span> <span class="court-dotted-line" style="flex:1.8;">-</span>
                 </div>
                 <div class="court-preamble-row compact">
                     <span>ตรอก/ซอย</span> <span class="court-dotted-line" style="flex:1;">-</span>
-                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistSubDistrict || 'หนองครก')}</span>
+                    <span>ตำบล/แขวง</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistSubDistrict ?? 'หนองครก')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistDistrict || 'เมือง')}</span>
-                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistProvince || 'ศรีสะเกษ')}</span>
-                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.TypistPostalCode || '๓๓๐๐๐')}</span>
+                    <span>อำเภอ/เขต</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistDistrict ?? 'เมือง')}</span>
+                    <span>จังหวัด</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.TypistProvince ?? 'ศรีสะเกษ')}</span>
+                    <span>รหัสไปรษณีย์</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.TypistPostalCode ?? '๓๓๐๐๐')}</span>
                 </div>
                 <div class="court-preamble-row compact">
-                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${t(extra.TypistPhone || '๐๘๘-๗๗๗๖-๗๗๕')}</span> <span>เป็นผู้เขียนหรือพิมพ์</span>
+                    <span>โทรศัพท์</span> <span class="court-dotted-line" style="flex:1;">${t(extra.TypistPhone ?? '๐๘๘-๗๗๗๖-๗๗๕')}</span> <span>เป็นผู้เขียนหรือพิมพ์</span>
                 </div>
                 ${this.renderCenteredSigRow(doc.typistSignatureBase64, t(doc.typistName || ''), 'ผู้เขียนหรือพิมพ์')}
             </div>
@@ -1171,7 +1226,7 @@ window.CourtRenderer = {
     renderAppointmentForm9(doc, lawCase, clauses, extra, t) {
         const powerText = clauses[0]?.Content || clauses[0]?.content ||
             'ดำเนินกระบวนพิจารณาใดๆ ไปในทางจำหน่ายสิทธิของข้าพเจ้าได้ด้วย เช่น การยอมรับตามที่คู่ความอีกฝ่ายหนึ่งเรียกร้อง การถอนฟ้อง การประนีประนอมยอมความ การสละสิทธิหรือใช้สิทธิในการอุทธรณ์หรือฎีกาหรือขอให้พิจารณาคดีใหม่';
-        const lawyerName = extra.AppointedLawyerName || doc.drafterName || 'นายปิยะณัฐ วัชราภรณ์';
+        const lawyerName = extra.AppointedLawyerName ?? doc.drafterName ?? 'นายปิยะณัฐ วัชราภรณ์';
 
         return `
         <!-- หน้า ๑ ใบแต่งทนายความ (๙) -->
@@ -1213,8 +1268,8 @@ window.CourtRenderer = {
                 <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(doc.requesterCitizenId || '3730100915068', doc.useThaiNumerals !== false)}
             </div>
             <div class="court-preamble-row compact">
-                <span>ใบอนุญาตให้เป็นทนายความเลขที่</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(extra.LicenseNo || '๗๘๓๔/๒๕๒๙')}</span>
-                <span>ได้รับอนุญาตให้ว่าความ</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.Jurisdiction || 'ทั่วราชอาณาจักร')}</span>
+                <span>ใบอนุญาตให้เป็นทนายความเลขที่</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(extra.LicenseNo ?? '๗๘๓๔/๒๕๒๙')}</span>
+                <span>ได้รับอนุญาตให้ว่าความ</span> <span class="court-dotted-line" style="flex:1.2;">${t(extra.Jurisdiction ?? 'ทั่วราชอาณาจักร')}</span>
             </div>
             <div class="court-preamble-row indent compact">
                 <span>ที่อยู่ปัจจุบันเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(doc.requesterHouseNo || '๙๐/๓')}</span>
@@ -1286,7 +1341,7 @@ window.CourtRenderer = {
                 <span>ขอมอบฉันทะให้</span> <span class="court-dotted-line" style="flex:1; font-weight:600;">${t(doc.typistName || 'นายชาญณรงค์ ผ่องแผ้ว (เสมียนทนาย)')}</span>
             </div>
             <div class="court-preamble-row compact" style="margin:4px 0;">
-                <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(extra.ProxyCitizenId || '3330100881294', doc.useThaiNumerals !== false)}
+                <span>เลขประจำตัวประชาชน</span> ${this.renderCitizenBoxes(extra.ProxyCitizenId ?? '3330100881294', doc.useThaiNumerals !== false)}
             </div>
             <div class="court-preamble-row compact">
                 <span>อยู่บ้านเลขที่</span> <span class="court-dotted-line" style="flex:0.8;">${t(doc.requesterHouseNo || '๒๖๐/๑๗')}</span>
@@ -1334,16 +1389,16 @@ window.CourtRenderer = {
                 ด้วยโจทก์ได้ยื่นฟ้องจำเลยต่อศาลนี้มีข้อหาเป็นใจความว่า <span class="court-dotted-line" style="min-width:320px;">${t(clauses[0]?.Content || clauses[0]?.content || 'ตามสำเนาคำฟ้องซึ่งได้ส่งมาพร้อมกับหมายเรียกนี้')}</span>
             </div>
             <div class="court-preamble-row" style="margin:8px 0;">
-                <span>จำนวนทุนทรัพย์หรือราคาที่เรียกร้อง</span> <span class="court-dotted-line" style="flex:2; font-weight:600;">${t(extra.ClaimAmountBaht || (lawCase?.claimAmount ? lawCase.claimAmount.toLocaleString() : '๑๕๘,๑๒๕'))}</span> <span>บาท</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.ClaimAmountSatang || '-')}</span> <span>สตางค์</span>
+                <span>จำนวนทุนทรัพย์หรือราคาที่เรียกร้อง</span> <span class="court-dotted-line" style="flex:2; font-weight:600;">${t(extra.ClaimAmountBaht ?? (lawCase?.claimAmount ? lawCase.claimAmount.toLocaleString() : '๑๕๘,๑๒๕'))}</span> <span>บาท</span> <span class="court-dotted-line" style="flex:0.8;">${t(extra.ClaimAmountSatang ?? '-')}</span> <span>สตางค์</span>
             </div>
             <div style="text-indent:2.5rem; margin:10px 0;">
                 เพราะฉะนั้น ให้ท่านไปศาลเพื่อการไกล่เกลี่ย ให้การแก้ข้อหาแห่งคดี และสืบพยาน
             </div>
             <div class="court-preamble-row">
-                <span>วันที่</span> <span class="court-dotted-line" style="flex:0.7;">${t(extra.HearingDay || doc.docDay || '๑๒')}</span>
-                <span>เดือน</span> <span class="court-dotted-line" style="flex:1.4;">${extra.HearingMonth || doc.docMonth || 'กุมภาพันธ์'}</span>
+                <span>วันที่</span> <span class="court-dotted-line" style="flex:0.7;">${t(extra.HearingDay ?? doc.docDay ?? '๑๒')}</span>
+                <span>เดือน</span> <span class="court-dotted-line" style="flex:1.4;">${extra.HearingMonth ?? doc.docMonth ?? 'กุมภาพันธ์'}</span>
                 <span>พ.ศ. ๒๕</span><span class="court-dotted-line" style="flex:0.6;">${t(doc.docYear || '๖๗')}</span>
-                <span>เวลา</span> <span class="court-dotted-line" style="flex:0.9;">${t(extra.HearingTime || '๐๙.๐๐')}</span> <span>นาฬิกา</span>
+                <span>เวลา</span> <span class="court-dotted-line" style="flex:0.9;">${t(extra.HearingTime ?? '๐๙.๐๐')}</span> <span>นาฬิกา</span>
             </div>
             <div style="margin-top:28px;">
                 ${this.renderCenteredSigRow('', '', 'ผู้พิพากษา')}
@@ -1394,10 +1449,10 @@ window.CourtRenderer = {
                 เพราะฉะนั้น ให้ท่านทำคำให้การแก้คดียื่นต่อศาลภายใน ๑๕ วัน นับแต่วันที่ได้รับหมายหรือถือว่าได้รับหมายนี้
             </div>
             <div class="court-preamble-row indent compact" style="margin-top:6px;">
-                <span>นัดชี้สองสถาน/สืบพยานโจทก์ วันที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(extra.HearingDay || doc.docDay || '')}</span>
-                <span>เดือน</span> <span class="court-dotted-line" style="flex:1.2;">${extra.HearingMonth || doc.docMonth || ''}</span>
+                <span>นัดชี้สองสถาน/สืบพยานโจทก์ วันที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(extra.HearingDay ?? doc.docDay ?? '')}</span>
+                <span>เดือน</span> <span class="court-dotted-line" style="flex:1.2;">${extra.HearingMonth ?? doc.docMonth ?? ''}</span>
                 <span>พ.ศ. ๒๕</span><span class="court-dotted-line" style="flex:0.5;">${t(doc.docYear || '')}</span>
-                <span>เวลา</span> <span class="court-dotted-line" style="flex:0.7;">๐๙.๐๐</span> <span>นาฬิกา</span>
+                <span>เวลา</span> <span class="court-dotted-line" style="flex:0.7;">${t(extra.HearingTime ?? '')}</span> <span>นาฬิกา</span>
             </div>
             <div style="margin-top:20px;">
                 ${this.renderCenteredSigRow('', '', 'ผู้พิพากษา')}
@@ -1431,10 +1486,10 @@ window.CourtRenderer = {
                 บัดนี้ ศาลได้มีคำสั่งประทับฟ้องในกระทงความผิด <span class="court-dotted-line" style="min-width:280px;">${t(lawCase?.chargeOrCauseOfAction || '')}</span>
             </div>
             <div class="court-preamble-row compact" style="margin-top:8px;">
-                <span>และนัดจำเลยให้การ/สืบพยานโจทก์ วันที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(doc.docDay || '')}</span>
-                <span>เดือน</span> <span class="court-dotted-line" style="flex:1.2;">${doc.docMonth || ''}</span>
+                <span>และนัดจำเลยให้การ/สืบพยานโจทก์ วันที่</span> <span class="court-dotted-line" style="flex:0.6;">${t(extra.HearingDay ?? doc.docDay ?? '')}</span>
+                <span>เดือน</span> <span class="court-dotted-line" style="flex:1.2;">${extra.HearingMonth ?? doc.docMonth ?? ''}</span>
                 <span>พ.ศ. ๒๕</span><span class="court-dotted-line" style="flex:0.5;">${t(doc.docYear || '')}</span>
-                <span>เวลา</span> <span class="court-dotted-line" style="flex:0.7;">๐๙.๐๐</span> <span>นาฬิกา</span>
+                <span>เวลา</span> <span class="court-dotted-line" style="flex:0.7;">${t(extra.HearingTime ?? '')}</span> <span>นาฬิกา</span>
             </div>
             <div style="text-indent:2.5rem; margin-top:6px;">เพราะฉะนั้น ให้จำเลยไปศาลตามกำหนดนี้</div>
             <div style="margin-top:20px;">
@@ -1477,7 +1532,7 @@ window.CourtRenderer = {
     // แบบ (๑๕) บัญชีพยาน
     renderWitnessForm15(doc, lawCase, witnesses, extra, t) {
         const rows = Array.isArray(witnesses) ? [...witnesses] : [];
-        const totalDeclared = t(extra.TotalWitnessCount || rows.length || '๑๐');
+        const totalDeclared = t(extra.TotalWitnessCount ?? rows.length ?? '๑๐');
         while (rows.length < 12) {
             rows.push({ OrderNo: '', WitnessNameAndDesc: '', AddressText: '', Note: '' });
         }

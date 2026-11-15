@@ -32,4 +32,5 @@ bld/
 # OS files
 .DS_Store
 Thumbs.db
-
+.build-check/
+artifacts/
