@@ -83,7 +83,7 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
         var mappings = (await conn.QueryAsync<LawyerClerkMapping>("SELECT * FROM SL_LawyerClerkMappings WHERE IsActive=1 AND (LawyerUserId=@Id OR ClerkUserId=@Id)", user)).ToList();
         var cases = admin ? new List<LawCase>() : (await conn.QueryAsync<LawCase>("""
             SELECT c.* FROM SL_LawCases c WHERE
-            (@Role='Lawyer' AND c.PrimaryLawyerId=@LawyerProfileId) OR
+            (@Role='Lawyer' AND (c.PrimaryLawyerId=@LawyerProfileId OR EXISTS(SELECT 1 FROM SL_OfficeCaseAssignments oa WHERE oa.CaseId=c.Id AND oa.OfficeOwnerUserId=@Id))) OR
             (@Role='Clerk' AND c.ClerkId=@LawyerProfileId AND EXISTS
               (SELECT 1 FROM SL_LawyerClerkMappings m JOIN SL_UserAccounts u ON u.Id=m.LawyerUserId
                WHERE m.ClerkUserId=@Id AND m.IsActive=1 AND u.LawyerProfileId=c.PrimaryLawyerId))
@@ -95,6 +95,7 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
         var area = parts.Length > 1 ? parts[1] : "";
         int routeId = int.TryParse(parts.ElementAtOrDefault(2), out var rid) ? rid : 0;
         if (area == "admin" && !admin) return Results.StatusCode(403);
+        if (area == "office" && (!lawyer || await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_LawOfficeMembers WHERE LawyerUserId=@Id AND IsActive=1",user)==1)) return Results.StatusCode(403);
         if (area == "admin" && write && parts.ElementAtOrDefault(2) == "users" && int.TryParse(parts.ElementAtOrDefault(3),out var managedUser) && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_UserAccounts WHERE Id=@managedUser AND Role=N'Client'",new{managedUser})>0) return Results.StatusCode(403);
         if (admin && new[] { "cases", "documents", "files", "parties", "litigation", "signatures", "lawyers", "clerk-mappings" }.Contains(area)) return Results.StatusCode(403);
         if (area == "templates" && write && !admin) return Results.StatusCode(403);
@@ -144,7 +145,10 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
             if (arg is LawCase lc)
             {
                 if (HttpMethods.IsPost(http.Request.Method) && (string.IsNullOrWhiteSpace(lc.CourtName) || string.IsNullOrWhiteSpace(lc.PlaintiffName) || string.IsNullOrWhiteSpace(lc.DefendantName))) return Results.BadRequest(new { message = "กรุณาระบุศาลและคู่ความ" });
-                lc.PrimaryLawyerId = user.LawyerProfileId;
+                var officeAssignedProfile = HttpMethods.IsPut(http.Request.Method)
+                    ? await conn.ExecuteScalarAsync<int?>("SELECT u.LawyerProfileId FROM SL_OfficeCaseAssignments a JOIN SL_UserAccounts u ON u.Id=a.LawyerUserId WHERE a.CaseId=@Id AND a.OfficeOwnerUserId=@Owner", new { lc.Id, Owner=user.Id })
+                    : null;
+                lc.PrimaryLawyerId = officeAssignedProfile.GetValueOrDefault(user.LawyerProfileId);
                 if (lc.ClerkId > 0 && !mappings.Any(m => m.ClerkProfileId == lc.ClerkId && m.LawyerUserId == user.Id)) return Results.BadRequest(new { message = "เสมียนไม่ได้อยู่ในสังกัด" });
             }
             if (arg is ElectronicSignature sig) { sig.SignerName = user.FullName; sig.IsDefault = false; }
@@ -208,7 +212,8 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
             await conn.ExecuteAsync("INSERT INTO SL_AuditLog (UserId, Action, Resource) VALUES (@Id,@Action,@Resource)", new { user.Id, Action = http.Request.Method, Resource = path });
         if (result is not IValueHttpResult value || value.Value == null) return result;
         var json = JsonSerializer.SerializeToNode(value.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        var relatedUserIds = mappings.SelectMany(m => new[] { m.LawyerUserId, m.ClerkUserId }).Append(user.Id).ToHashSet();
+        var officeMembers = await conn.QueryAsync<int>("SELECT LawyerUserId FROM SL_LawOfficeMembers WHERE OfficeOwnerUserId=@Id AND IsActive=1 UNION SELECT OfficeOwnerUserId FROM SL_LawOfficeMembers WHERE LawyerUserId=@Id AND IsActive=1",user);
+        var relatedUserIds = mappings.SelectMany(m => new[] { m.LawyerUserId, m.ClerkUserId }).Concat(officeMembers).Append(user.Id).ToHashSet();
         var profileIds = cases.Select(c => c.PrimaryLawyerId).Concat(cases.Select(c => c.ClerkId)).Append(user.LawyerProfileId).Concat(mappings.Select(m => m.ClerkProfileId)).ToHashSet();
         bool Allowed(JsonNode? node, string key)
         {

@@ -47,7 +47,26 @@
                 ShowPermission:false
             };
             if (number(code) === 9) nextExtra.Form9Lawyer = A.toForm9LawyerProfile(caseLawyer) || {};
-            const next = drafts.get(key) || {...current, id:0, templateId:tpl?.id || null, formCode:code,
+            const next = number(code) === 9 ? {
+                ...current,
+                id:0,
+                templateId:tpl?.id || null,
+                formCode:code,
+                documentTitle:names[9] || tpl?.defaultHeaderTitle || tpl?.formName || code,
+                docDay:'', docMonth:'', docYear:'',
+                requesterFullName:'', requesterStatus:'', requesterCitizenId:'', requesterOccupation:'', requesterAge:'',
+                requesterRace:'', requesterNationality:'', requesterHouseNo:'', requesterMoo:'', requesterRoad:'', requesterSoi:'',
+                requesterNearBy:'', requesterSubDistrict:'', requesterDistrict:'', requesterProvince:'', requesterPostalCode:'', requesterPhone:'',
+                signerName:'', signerRole:'', signatureImageBase64:'', drafterSignatureBase64:'', typistSignatureBase64:'',
+                drafterName:caseLawyer?.fullName || '', drafterSignatureBase64:caseLawyer?.signatureDataUrl || '',
+                clausesJson:'[]', closingPrayer:'',
+                extraFieldsJson:JSON.stringify({
+                    TextFontFamily:extra.TextFontFamily,
+                    TextFontSize:extra.TextFontSize,
+                    Form9Lawyer:A.toForm9LawyerProfile(caseLawyer) || {}
+                }),
+                status:'ร่าง'
+            } : drafts.get(key) || {...current, id:0, templateId:tpl?.id || null, formCode:code,
                 documentTitle:names[number(code)] || tpl?.defaultHeaderTitle || tpl?.formName || code,
                 closingPrayer: number(code) === 4 ? 'ควรมิควรแล้วแต่จะโปรด' : current.closingPrayer,
                 clausesJson:'[]', extraFieldsJson:JSON.stringify(nextExtra), status:'ร่าง'};
@@ -116,6 +135,10 @@
         const doc = collect.call(this);
         if (!loading) {
             const extra = parse(doc.extraFieldsJson);
+            const fontFamily = document.getElementById('edClauseTextFontFamily')?.value;
+            const fontSize = document.getElementById('edClauseTextFontSize')?.value;
+            if (fontFamily) extra.TextFontFamily = fontFamily;
+            if (fontSize) extra.TextFontSize = Number(fontSize);
             document.querySelectorAll('[data-court-field]').forEach(el => {
                 if (el.dataset.caseField === 'true') (extra.CaseFields ||= {})[el.dataset.courtField] = el.value;
                 else extra[el.dataset.courtField] = el.value;

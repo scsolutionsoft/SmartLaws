@@ -323,16 +323,14 @@ body {
     padding-bottom: 1px;
 }
 
-.court-form9-page .court-dotted-line,
-.court-form9-page .court-dotted-block,
-.court-form9-page .court-signature-row .court-signature-line + .court-signature-line {
-    font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', sans-serif;
-    font-size: 16pt !important;
-}
-
 .court-form9-page .court-signature-name {
-    width: 100%;
+    width: 60%;
+    min-width: 360px;
+    margin-left: auto;
+    margin-right: 0;
     text-align: center !important;
+    font-family: var(--court-entry-font-family, 'Sarabun', sans-serif) !important;
+    font-size: var(--court-entry-font-size, 14pt) !important;
 }
 
 .clause-content-editor { line-height: 1.35; }
@@ -341,11 +339,29 @@ body {
 .clause-style-select { width:100%; min-width:0; padding:5px 7px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#0f172a; font-size:12px; }
 
 .court-form9-page .citizen-digit-box {
-    width: 19px;
-    height: 26px;
-    font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', sans-serif;
-    font-size: 16pt;
+    width: 1.3em;
+    height: 1.65em;
+    font-family: var(--court-entry-font-family, 'Sarabun', sans-serif) !important;
+    font-size: var(--court-entry-font-size, 14pt) !important;
 }
+
+.court-form9-signature-dots {
+    width: 210px;
+    min-width: 210px !important;
+    box-sizing: border-box;
+}
+
+.court-form9-signature-line {
+    width: 60%;
+    min-width: 360px;
+    margin-left: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 210px minmax(0, 1fr);
+    align-items: baseline;
+}
+
+.court-form9-signature-label { text-align: right; }
+.court-form9-signature-role { text-align: left; }
 
 /* กรอบปีกกา ระหว่าง โจทก์ - จำเลย */
 .court-parties-table {
@@ -526,7 +542,8 @@ body {
 
 /* The document-level text controls apply to every entered value on every court form. */
 .court-page .court-dotted-line,
-.court-page .court-thai-line {
+.court-page .court-thai-line,
+.court-page .court-dotted-block {
     font-family: var(--court-entry-font-family, 'Sarabun', sans-serif) !important;
     font-size: var(--court-entry-font-size, 14pt) !important;
 }

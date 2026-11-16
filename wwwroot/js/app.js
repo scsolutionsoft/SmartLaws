@@ -54,6 +54,7 @@ window.App = {
         '(๑๓)': { idx: 13, name: 'แบบฟอร์มหมายเรียกคดีแพ่งสามัญ' },
         '(๑๔)': { idx: 14, name: 'แบบฟอร์มหมายเรียกคดีอาญา' },
         '(๑๕)': { idx: 15, name: 'แบบฟอร์มบัญชีระบุพยาน' },
+        '(๑๖)': { idx: 16, name: 'รายงานกระบวนพิจารณาคดี' },
         '(๔๐ ก.)': { idx: 40, name: 'ใบต่อคำคู่ความ' }
     },
 
@@ -134,7 +135,8 @@ window.App = {
             { code: '(๑๒)', label: 'หมายเรียกคดีมโนสาเร่' },
             { code: '(๑๓)', label: 'หมายเรียกคดีแพ่งสามัญ' },
             { code: '(๑๔)', label: 'หมายเรียกคดีอาญา' },
-            { code: '(๑๕)', label: 'บัญชีระบุพยาน' }
+            { code: '(๑๕)', label: 'บัญชีระบุพยาน' },
+            { code: '(๑๖)', label: 'รายงานกระบวนพิจารณาคดี (เอกสารประกอบนัด)' }
         ];
 
         let html = '';
@@ -375,7 +377,7 @@ window.App = {
             navReportsLabel.textContent = isAdmin ? 'รายงานบริการ (เฉพาะชื่อคดี)' : 'ระบบรายงานและสถิติคดีของฉัน';
         }
 
-        const lawyerOnlyTabs = ['dashboard', 'cases', 'studio', 'files', 'procedure', 'esign', 'printcenter'];
+        const lawyerOnlyTabs = ['dashboard', 'cases', 'studio', 'files', 'procedure', 'esign', 'printcenter', 'clientDesk', 'clientDeskChat'];
         if (isAdmin && lawyerOnlyTabs.includes(this.state.activeTab)) {
             this.switchTab('backoffice');
         } else if (!isAdmin && this.state.activeTab === 'backoffice') {
@@ -1068,6 +1070,7 @@ window.App = {
         const clerk = effectiveLawyer?.role === 'Clerk' ? defaultLawyer : null;
         const isAppointmentForm9 = tpl.formCode === '(๙)';
         const emptyRequesterFields = isAppointmentForm9 ? {
+            docDay: '', docMonth: '', docYear: '',
             requesterFullName: '',
             requesterStatus: '',
             requesterCitizenId: '',
@@ -2272,6 +2275,12 @@ window.App = {
 
     onUploadModalFormCodeChange(formCode) {
         const caseId = document.getElementById('upCaseId')?.value || this.state.currentCaseId;
+        if (formCode === '(๑๖)') {
+            const title = document.getElementById('upFileTitle');
+            const remark = document.getElementById('upRemark');
+            if (title && !title.value.trim()) title.placeholder = 'เช่น รายงานกระบวนพิจารณา นัดวันที่ ๑๕ พฤศจิกายน ๒๕๖๙';
+            if (remark && !remark.value.trim()) remark.placeholder = 'ระบุวันนัดหรือครั้งที่นัด เพื่อค้นหาเอกสารได้ง่าย';
+        }
         this.updateUploadModalFormStatusBadge(caseId, formCode);
     },
 

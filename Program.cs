@@ -84,6 +84,7 @@ using (var scope = app.Services.CreateScope())
     await ClientPortal.InitializeAsync(db);
     await LawyerArchive.InitializeAsync(db);
     await CaseParties.InitializeAsync(db);
+    await OfficeTeam.InitializeAsync(db);
 }
 
 var api = app.MapGroup("/api").AddEndpointFilter<AccessControl>();
@@ -99,6 +100,7 @@ IdentityDocuments.Map(api);
 ClientPortal.Map(api);
 LawyerArchive.Map(api);
 CaseParties.Map(api);
+OfficeTeam.Map(api);
 
 // ==================== API ENDPOINTS ====================
 

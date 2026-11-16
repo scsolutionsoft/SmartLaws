@@ -35,3 +35,10 @@ body[data-theme=midnight]{--accent:#546b9d;--accent-soft:#e9edf7;--nav:#101525;-
 @media(max-width:900px){.sl-auth{grid-template-columns:1fr}.sl-auth-story{padding:30px}.sl-auth-story img{display:none}.sl-auth-story h1{font-size:26px}.sl-auth-story p{display:none}.sl-hero{grid-template-columns:1fr}.sl-hero img{display:none}.sl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.sl-themes{grid-template-columns:repeat(2,minmax(0,1fr))}.sl-grid{grid-template-columns:1fr}.sl-hero h2{font-size:24px}.sl-dialog-body{padding:20px}}@media print{.sl-hero,.sl-dialog,.sl-workspace-tools{display:none!important}}
 
 .sidebar button.nav-item{width:calc(100% - 24px)!important}.topbar>div:nth-child(2)>button{display:none!important}.topbar{gap:12px!important}.sl-workspace-tools{margin-left:auto}.sl-card ul:not(.sl-list){padding-left:20px;line-height:2}@media(max-width:900px){#headerQuotaBadge{display:none}.topbar{position:relative!important}.sl-hero{padding:24px}.sl-hero h2{font-size:22px}.topbar>div:nth-child(2){max-width:100%}#headerAccountSelect{max-width:260px}.sidebar:not(.open){transform:translateX(-100%);visibility:hidden}.sidebar.open{visibility:visible}.sl-workspace-tools{margin-left:0}}
+.sidebar .nav-section-title{margin:16px 12px 7px;padding:8px 10px;border-radius:8px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;background:#ffffff08;border-left:3px solid #7f9ca1;color:#b7c9ca}
+.sidebar .nav-section-work{border-left-color:#4db6ac;color:#9ce3d8;background:#0e555244}
+.sidebar .nav-section-docs{border-left-color:#60a5fa;color:#bfdbfe;background:#1d4d7444}
+.sidebar .nav-section-clients{border-left-color:#c084fc;color:#e9d5ff;background:#51256b55}
+.sidebar .nav-section-admin{border-left-color:#fbbf24;color:#fde68a;background:#714b1744}
+.sidebar .nav-item-client{border:1px solid #a855f766!important;background:#612c7730!important;color:#f3e8ff!important}
+.sidebar .nav-item-client:hover,.sidebar .nav-item-client.active{background:#7e3f99!important;color:white!important;border-color:#d8b4fe!important}

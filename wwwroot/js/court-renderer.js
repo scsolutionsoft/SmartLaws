@@ -338,6 +338,22 @@ window.CourtRenderer = {
         </div>`;
     },
 
+    renderForm9Signature(sigBase64, signerName, signerRole = 'ผู้แต่งทนายความ') {
+        const sigOverlay = sigBase64
+            ? `<img src="${sigBase64}" style="position:absolute; left:50%; transform:translateX(-50%); bottom:3px; max-height:38px; max-width:160px; object-fit:contain; pointer-events:none;" alt="ลายเซ็นอิเล็กทรอนิกส์" />`
+            : '';
+        return `
+        <div class="court-signature-row court-form9-signature">
+            <div class="court-signature-line court-form9-signature-line">
+                ${sigOverlay}
+                <span class="court-form9-signature-label">ลงชื่อ</span>
+                <span class="court-dotted-line court-form9-signature-dots">&nbsp;</span>
+                <span class="court-form9-signature-role">${signerRole || ''}</span>
+            </div>
+            ${signerName ? `<div class="court-signature-name court-form9-signature-name">(${signerName})</div>` : ''}
+        </div>`;
+    },
+
     // การลงชื่อชิดขวาใต้หมายเหตุท้ายหน้าแรก ตามภาพที่ 4 (คำร้อง) และภาพที่ 5 (คำฟ้อง/คำให้การจำเลย) — นำเส้นประ 2 เส้นล่างสุดออกตามคำสั่งผู้ใช้
     renderBottomNoteSection(doc, lawCase, isPlaint4, isDefense11) {
         const sigBase64 = doc.signatureImageBase64 || '';
@@ -524,7 +540,8 @@ window.CourtRenderer = {
         const family = fontFamilies[extra.TextFontFamily] || fontFamilies[isDefenseForm ? 'th-sarabun-new' : 'sarabun'];
         const size = [12, 14, 16, 18].includes(Number(extra.TextFontSize)) ? Number(extra.TextFontSize) : (isDefenseForm ? 16 : 14);
         const pageStyle = `--court-entry-font-family:${family};--court-entry-font-size:${size}pt;`;
-        return html.replace(/<div class="court-page"(?=[\s>])/g, `<div class="court-page" style="${pageStyle}"`);
+        return html.replace(/<div class="([^"]*\bcourt-page\b[^"]*)"/g, (match, classes) =>
+            `<div class="${classes}" style="${pageStyle}"`);
     },
 
     // แบบ (๑) ปกหน้าสำนวน ตาม PDF
@@ -1323,7 +1340,7 @@ window.CourtRenderer = {
             </div>
             <div>ทนายความจะได้ดำเนินกระบวนพิจารณาต่อไปตามกฎหมาย</div>
 
-            ${this.renderCenteredSigRow(doc.signatureImageBase64, t(doc.signerName || doc.requesterFullName), 'ผู้แต่งทนายความ')}
+            ${this.renderForm9Signature(doc.signatureImageBase64, lawyerName)}
             <div style="text-align:right; font-weight:600; margin-top:6px;">(พลิก)</div>
 
             <div style="margin-top:12px; border-top:1.5px solid #000; padding-top:8px; font-size:12pt; color:#1e293b;">
@@ -1386,7 +1403,7 @@ window.CourtRenderer = {
             </div>
             <div>เพื่อดำเนินกระบวนพิจารณาต่อไปตามหน้าที่ในกฎหมาย</div>
 
-            ${this.renderCenteredSigRow(doc.drafterSignatureBase64, t(lawyerName), 'ทนายความ')}
+            ${this.renderForm9Signature(doc.drafterSignatureBase64, t(lawyerName), 'ทนายความ')}
 
             <div style="margin-top:24px;">
                 <div style="text-align:center; font-weight:700; text-decoration:underline; font-size:15pt;">คำสั่ง</div>
@@ -1395,7 +1412,7 @@ window.CourtRenderer = {
                     <div class="court-thai-line">&nbsp;</div>
                     <div class="court-thai-line">&nbsp;</div>
                 </div>
-                ${this.renderCenteredSigRow('', '', 'ผู้พิพากษา')}
+                ${this.renderForm9Signature('', '', 'ผู้พิพากษา')}
             </div>
         </div>`;
     },

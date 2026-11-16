@@ -153,7 +153,7 @@ public static class ClientPortal
             if(!Owns(h,caseId))return Results.NotFound();var password=Digits(r.CitizenId);if(!Regex.IsMatch(password,"^[0-9]{13}$"))return Results.BadRequest(new{message="ระบุเลข 13 หลัก"});
             using var c=db.CreateConnection();await c.OpenAsync();using var tx=c.BeginTransaction();
             if(await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_ClientCaseLinks WHERE UserId=@clientId AND CaseId=@caseId",new{caseId,clientId},tx)==0)return Results.NotFound();
-            if(await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_ClientCaseLinks a JOIN SL_LawCases lc ON lc.Id=a.CaseId WHERE a.UserId=@clientId AND lc.PrimaryLawyerId<>@owner",new{clientId,owner=AccountSecurity.User(h).LawyerProfileId},tx)>0)return Results.Conflict(new{message="บัญชีนี้มีคดีของทนายอื่นด้วย กรุณาให้ลูกความเปลี่ยนรหัสผ่านด้วยตนเอง"});
+            if(await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_ClientCaseLinks a JOIN SL_LawCases lc ON lc.Id=a.CaseId WHERE a.UserId=@clientId AND lc.PrimaryLawyerId<>@owner AND NOT EXISTS(SELECT 1 FROM SL_OfficeCaseAssignments oa WHERE oa.CaseId=lc.Id AND oa.OfficeOwnerUserId=@ownerUser)",new{clientId,owner=AccountSecurity.User(h).LawyerProfileId,ownerUser=AccountSecurity.User(h).Id},tx)>0)return Results.Conflict(new{message="บัญชีนี้มีคดีของทนายอื่นด้วย กรุณาให้ลูกความเปลี่ยนรหัสผ่านด้วยตนเอง"});
             if(await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_ClientIdentities WHERE UserId=@clientId AND CitizenNumber=@password",new{clientId,password},tx)!=1)return Results.BadRequest(new{message="เลขประจำตัวไม่ตรงกับบัญชี"});
             await c.ExecuteAsync("UPDATE SL_UserAccounts SET PasswordHash=@hash WHERE Id=@clientId AND Role='Client'; UPDATE SL_ClientIdentities SET MustChangePassword=1 WHERE UserId=@clientId; DELETE FROM SL_Sessions WHERE UserId=@clientId",new{clientId,hash=AccountSecurity.Hash(password)},tx);tx.Commit();return Results.Ok();
         });
@@ -195,16 +195,16 @@ public static class ClientPortal
             using var c=db.CreateConnection();await c.OpenAsync();using var tx=c.BeginTransaction();
             await c.ExecuteAsync("UPDATE SL_UserAccounts SET PasswordHash=@hash WHERE Id=@Id; UPDATE SL_ClientIdentities SET MustChangePassword=0 WHERE UserId=@Id; DELETE FROM SL_Sessions WHERE UserId=@Id",new{u.Id,hash=AccountSecurity.Hash(r.NewPassword)},tx);tx.Commit();await h.SignOutAsync();return Results.Ok(new{requiresLogin=true});
         });
-        api.MapGet("/client/files/{id:int}",async(int id,HttpContext h,DatabaseService db,WordExportService word)=>{
+        api.MapGet("/client/files/{id:int}",async(int id,HttpContext h,DatabaseService db,WordExportService word,bool preview=false)=>{
             var a=Access(h);using var c=db.CreateConnection();var f=await c.QuerySingleOrDefaultAsync<CaseFileAttachment>("SELECT f.* FROM SL_CaseFileAttachments f JOIN SL_ClientShares s ON s.FileId=f.Id WHERE s.ClientUserId=@UserId AND f.CaseId=@CaseId AND f.Id=@id",new{a.UserId,a.CaseId,id});
             if(f==null)return Results.NotFound();
             if(f.StorageKey is string key)
             {
                 var storage=h.RequestServices.GetRequiredService<FileStorage>();
-                try{return Results.File(storage.OpenRead(key),f.MimeType,$"case-file-{id}."+(f.MimeType=="application/pdf"?"pdf":f.MimeType=="image/png"?"png":"jpg"),enableRangeProcessing:true);}
+                try{return preview?Results.File(storage.OpenRead(key),f.MimeType,enableRangeProcessing:true):Results.File(storage.OpenRead(key),f.MimeType,$"case-file-{id}."+(f.MimeType=="application/pdf"?"pdf":f.MimeType=="image/png"?"png":"jpg"),enableRangeProcessing:true);}
                 catch(FileNotFoundException){return Results.NotFound();}
             }
-            if(!string.IsNullOrEmpty(f.FileDataBase64)){var bytes=Convert.FromBase64String(f.FileDataBase64.Contains(',')?f.FileDataBase64.Split(',',2)[1]:f.FileDataBase64);return Results.File(bytes,f.MimeType,$"case-file-{id}."+(f.MimeType=="application/pdf"?"pdf":f.MimeType=="image/png"?"png":"jpg"));}
+            if(!string.IsNullOrEmpty(f.FileDataBase64)){var bytes=Convert.FromBase64String(f.FileDataBase64.Contains(',')?f.FileDataBase64.Split(',',2)[1]:f.FileDataBase64);return preview?Results.File(bytes,f.MimeType):Results.File(bytes,f.MimeType,$"case-file-{id}."+(f.MimeType=="application/pdf"?"pdf":f.MimeType=="image/png"?"png":"jpg"));}
             if(f.StorageType=="COURT_FORM"&&f.DocumentId.HasValue){var d=await c.QuerySingleOrDefaultAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments WHERE Id=@DocumentId AND CaseId=@CaseId",f);if(d==null)return Results.NotFound();var lc=await c.QuerySingleAsync<LawCase>("SELECT * FROM SL_LawCases WHERE Id=@CaseId",f);return Results.File(word.GenerateCourtDocumentDocx(d,lc),"application/vnd.openxmlformats-officedocument.wordprocessingml.document",$"case-document-{id}.docx");}
             if(f.StorageType=="LINK"&&Uri.TryCreate(f.FileUrlOrPath,UriKind.Absolute,out var link)&&link.Scheme=="https")return Results.Redirect(link.AbsoluteUri);
             return Results.NotFound();
