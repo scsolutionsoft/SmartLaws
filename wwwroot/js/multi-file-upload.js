@@ -28,7 +28,7 @@
     A.renderUploadBatch = function() {
         const binary=document.getElementById('upStorageType').value!=='LINK';
         for(const id of ['upFileTitle','upPageCount']) document.getElementById(id).parentElement.classList.toggle('hidden',binary&&this.uploadBatch.length>0);
-        document.getElementById('uploadBatchList').innerHTML=this.uploadBatch.length ? `<p class="mb-2 font-semibold">เลือก ${this.uploadBatch.length} ไฟล์ • แก้ชื่อคำร้องและจำนวนแผ่นแยกแต่ละไฟล์ได้</p><table class="sl-table"><thead><tr><th>ไฟล์ / ชื่อคำร้อง</th><th>แผ่น</th><th>สถานะ</th></tr></thead><tbody>${this.uploadBatch.map((entry,i)=>`<tr><td><div class="sl-muted" style="overflow-wrap:anywhere">${esc(entry.file.name)} (${(entry.file.size/1024/1024).toFixed(2)} MB)</div><input aria-label="ชื่อคำร้องไฟล์ที่ ${i+1}" class="sl-input" maxlength="200" value="${esc(entry.title)}" ${entry.status==='saved'?'disabled':''} oninput="App.uploadBatch[${i}].title=this.value"></td><td><input aria-label="จำนวนแผ่นไฟล์ที่ ${i+1}" class="sl-input" style="min-width:70px" type="number" min="1" value="${entry.pages}" ${entry.status==='saved'?'disabled':''} oninput="App.uploadBatch[${i}].pages=Number(this.value)"></td><td><span>${entry.status==='saved'?'✓ บันทึกแล้ว':entry.status==='saving'?'กำลังบันทึก…':entry.status==='error'?'บันทึกไม่สำเร็จ':'รอบันทึก'}</span>${entry.error?`<p class="sl-error">${esc(entry.error)}</p>`:''}${entry.status!=='saved'?`<button type="button" class="sl-link" onclick="App.removeUploadBatchFile(${i})">นำออก</button>`:''}</td></tr>`).join('')}</tbody></table>` : '';
+        document.getElementById('uploadBatchList').innerHTML=this.uploadBatch.length ? `<p class="mb-2 font-semibold">เลือก ${this.uploadBatch.length} ไฟล์ • ระบบอ่านจำนวนหน้า PDF จริงให้อัตโนมัติ</p><table class="sl-table"><thead><tr><th>ไฟล์ / ชื่อคำร้อง</th><th>จำนวนแผ่น</th><th>สถานะ</th></tr></thead><tbody>${this.uploadBatch.map((entry,i)=>`<tr><td><div class="sl-muted" style="overflow-wrap:anywhere">${esc(entry.file.name)} (${(entry.file.size/1024/1024).toFixed(2)} MB)</div><input aria-label="ชื่อคำร้องไฟล์ที่ ${i+1}" class="sl-input" maxlength="200" value="${esc(entry.title)}" ${entry.status==='saved'?'disabled':''} oninput="App.uploadBatch[${i}].title=this.value"></td><td>${/\.pdf$/i.test(entry.file.name)?'<span class="sl-muted">อ่านอัตโนมัติหลังบันทึก</span>':`<input aria-label="จำนวนแผ่นไฟล์ที่ ${i+1}" class="sl-input" style="min-width:70px" type="number" min="1" value="${entry.pages}" ${entry.status==='saved'?'disabled':''} oninput="App.uploadBatch[${i}].pages=Number(this.value)">`}</td><td><span>${entry.status==='saved'?'✓ บันทึกแล้ว':entry.status==='saving'?'กำลังบันทึก…':entry.status==='error'?'บันทึกไม่สำเร็จ':'รอบันทึก'}</span>${entry.error?`<p class="sl-error">${esc(entry.error)}</p>`:''}${entry.status!=='saved'?`<button type="button" class="sl-link" onclick="App.removeUploadBatchFile(${i})">นำออก</button>`:''}</td></tr>`).join('')}</tbody></table>` : '';
     };
     A.removeUploadBatchFile = function(index) { if(this.uploadBatchBusy)return;this.uploadBatch.splice(index,1);this.renderUploadBatch(); };
     A.onSelectAttachmentFile = function(input) {
@@ -50,7 +50,12 @@
         if(!this.uploadBatch.length){progress.textContent='กรุณาเลือกไฟล์ก่อนบันทึก';return;}
         const caseId=Number(document.getElementById('upCaseId').value),formCode=document.getElementById('upFormCode').value,meta=this.getDirectoryMeta(formCode);
         if(!this.getAccessibleCases().some(c=>c.id===caseId)){progress.textContent='กรุณาเลือกสำนวนคดี';return;}
-        this.uploadBatchTarget ||= {caseId,formCode,directoryIndexNo:meta.idx,directoryCategoryName:meta.name,fileStatus:document.getElementById('upFileStatus').value,remark:document.getElementById('upRemark').value.trim()};
+        // Keep one destination after a partial success so retrying cannot split an
+        // already-started batch across cases. If every file failed, recapture the
+        // form values so the user can correct the case/category before retrying.
+        if(!this.uploadBatch.some(entry=>entry.status==='saved')) {
+            this.uploadBatchTarget={caseId,formCode,directoryIndexNo:meta.idx,directoryCategoryName:meta.name,fileStatus:document.getElementById('upFileStatus').value,remark:document.getElementById('upRemark').value.trim()};
+        }
         this.uploadBatchBusy=true;
         const lock=()=>modal.querySelectorAll('input,select,button').forEach(el=>el.disabled=true);
         lock();

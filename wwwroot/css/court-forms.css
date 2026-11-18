@@ -231,7 +231,8 @@ body {
 
 /* ย่อหน้า "ขอศาลได้โปรดอนุญาต" ย่อหน้าสุดท้ายก่อน ควรมิควรแล้วแต่จะโปรด (มีเส้นประบรรทัดด้านล่างและไม่ทับเส้นประ) */
 .court-closing-permission {
-    height: 31px !important;
+    height: auto !important;
+    min-height: 31px !important;
     line-height: 25px !important;
     padding-top: 1px !important;
     padding-left: 2.5rem;
@@ -613,9 +614,81 @@ body {
         padding: 8px 4px;
     }
     .court-page {
-        transform: scale(0.85);
-        transform-origin: top center;
+        transform: none;
     }
+}
+
+.studio-mobile-panel-controls { display:none; }
+
+@media (max-width: 1024px) {
+    #studioMobilePanelControls {
+        display:flex;
+        position:sticky;
+        top:0;
+        z-index:30;
+        gap:8px;
+        padding:8px;
+        border:1px solid #cbd5e1;
+        border-radius:12px;
+        background:#fff;
+        box-shadow:0 4px 14px #0f172a14;
+    }
+    #studioMobilePanelControls [role="tab"] {
+        flex:1;
+        min-height:42px;
+        border:1px solid #cbd5e1;
+        border-radius:9px;
+        background:#f8fafc;
+        color:#334155;
+        font-size:13px;
+        font-weight:700;
+    }
+    #studioMobilePanelControls [aria-selected="true"] {
+        border-color:#0f766e;
+        background:#0f766e;
+        color:#fff;
+    }
+    #view-studio[data-mobile-panel="edit"] #studioPreviewPanel,
+    #view-studio[data-mobile-panel="preview"] #studioEditorPanel { display:none; }
+    #studioEditorPanel { width:100%; padding:14px; }
+    #studioPreviewPanel { width:100%; }
+    #studioPaperPreview.court-paper-wrapper,
+    #popupViewerBody .court-paper-wrapper {
+        align-items:flex-start;
+        gap:14px;
+        padding:8px;
+        border-radius:10px;
+    }
+    #studioPaperPreview > .court-page,
+    #popupViewerBody .court-paper-wrapper > .court-page {
+        zoom:var(--court-preview-scale, 1);
+        transform:none;
+        transform-origin:top left;
+    }
+    #filePreviewModal { padding:8px; }
+    #filePreviewModal > div { width:100%; max-width:none; height:calc(100vh - 16px); height:calc(100dvh - 16px); min-height:0; }
+    #popupViewerBody { min-height:0; padding:8px; }
+    #popupViewerBody iframe { min-height:0 !important; }
+}
+
+@media (max-width: 640px) {
+    #view-studio { gap:12px; }
+    #view-studio > .bg-slate-900 { padding:12px; border-radius:12px; }
+    #view-studio > .bg-slate-900 > div:first-child,
+    #view-studio > .bg-slate-900 > div:last-child { width:100%; }
+    #view-studio #studioCaseSelect,
+    #view-studio #studioDocSelect,
+    #view-studio #studioTemplateSelect { width:100%; max-width:100%; min-width:0; }
+    #studioEditorPanel .grid.grid-cols-2 { grid-template-columns:minmax(0,1fr); }
+    #studioEditorPanel .grid.grid-cols-2 > .col-span-2 { grid-column:span 1; }
+    #studioEditorPanel textarea { min-height:110px; }
+    #studioPaperPreview.court-paper-wrapper { padding:4px; }
+    #filePreviewModal { padding:0; }
+    #filePreviewModal > div { height:100vh; height:100dvh; border-radius:0; }
+    #filePreviewModal > div > div:first-child { padding:10px; }
+    #filePreviewModal > div > div:first-child > div:last-child { width:100%; }
+    #filePreviewModal > div > div:first-child a,
+    #filePreviewModal > div > div:first-child button { min-height:40px; flex:1; text-align:center; }
 }
 
 /* ==========================================================================
@@ -704,6 +777,10 @@ body {
     .court-page:last-child {
         page-break-after: auto !important;
         break-after: auto !important;
+    }
+
+    .court-page.court-pleading-page {
+        padding: 15mm 16mm 16mm 22mm !important;
     }
 
     .court-thai-line,

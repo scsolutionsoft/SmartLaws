@@ -81,13 +81,18 @@ using (var scope = app.Services.CreateScope())
     await CommunityModule.InitializeAsync(db);
     await IdentityDocuments.InitializeAsync(db);
     await FileStorage.InitializeAsync(db);
+    await scope.ServiceProvider.GetRequiredService<FileStorage>().ImportLegacyFilesAsync(app.Logger);
     await ClientPortal.InitializeAsync(db);
+    await ConsultationPortal.InitializeAsync(db);
     await LawyerArchive.InitializeAsync(db);
     await CaseParties.InitializeAsync(db);
     await OfficeTeam.InitializeAsync(db);
+    await CourtTracking.InitializeAsync(db);
 }
 
 var api = app.MapGroup("/api").AddEndpointFilter<AccessControl>();
+app.MapGet("/api/consultations/lawyers", (DatabaseService db) => ConsultationPortal.PublicLawyers(db));
+ConsultationPortal.Map(api);
 WorkflowModule.Map(api);
 AppointmentModule.Map(api);
 AppointmentFiles.Map(api);
@@ -101,6 +106,7 @@ ClientPortal.Map(api);
 LawyerArchive.Map(api);
 CaseParties.Map(api);
 OfficeTeam.Map(api);
+CourtTracking.Map(api);
 
 // ==================== API ENDPOINTS ====================
 
@@ -293,11 +299,43 @@ api.MapGet("/documents/{id:int}", async (int id, DatabaseService db) =>
     return Results.Ok(new { Document = doc, Case = lawCase });
 });
 
+int? ResolveDocumentPartyId(CaseDocument document)
+{
+    try
+    {
+        using var json = System.Text.Json.JsonDocument.Parse(document.ExtraFieldsJson ?? "{}");
+        foreach (var key in new[] { "SelectedPartyId", "Form9DefendantPartyId" })
+            if (json.RootElement.TryGetProperty(key, out var value) && value.TryGetInt32(out var id) && id > 0) return id;
+    }
+    catch (System.Text.Json.JsonException) { }
+    return document.PartyId is > 0 ? document.PartyId : null;
+}
+
 api.MapPost("/documents", async (CaseDocument doc, DatabaseService db) =>
 {
     using var conn = db.CreateConnection();
+    doc.PartyId = ResolveDocumentPartyId(doc);
     await conn.OpenAsync();
-    var id = await db.InsertDocumentAsync(conn, doc);
+    using var transaction = conn.BeginTransaction(System.Data.IsolationLevel.Serializable);
+    var partyForm = doc.FormCode is "(๙)" or "(๑๑)" or "(๑๑ ก.)";
+    if (partyForm && doc.PartyId is not > 0)
+        return Results.BadRequest(new { message = doc.FormCode == "(๙)" ? "เลือกลูกความจากทะเบียนคู่ความก่อนบันทึกใบแต่งทนาย" : "เลือกจำเลยจากทะเบียนคู่ความก่อนบันทึกคำให้การ" });
+    if (doc.PartyId is > 0)
+    {
+        var party = await conn.QuerySingleOrDefaultAsync<CaseParty>(
+            "SELECT * FROM SL_CaseParties WHERE Id=@partyId AND CaseId=@caseId",
+            new { partyId = doc.PartyId, caseId = doc.CaseId }, transaction);
+        if (party == null || ((doc.FormCode is "(๑๑)" or "(๑๑ ก.)") && party.PartySide != "จำเลย") ||
+            (doc.FormCode == "(๙)" && !party.IsOurClient))
+            return Results.BadRequest(new { message = "เลือกลูกความหรือจำเลยจากทะเบียนคู่ความของคดีนี้ก่อนบันทึก" });
+        var existing = await conn.ExecuteScalarAsync<int>(
+            "SELECT TOP 1 Id FROM SL_CaseDocuments WITH (UPDLOCK,HOLDLOCK) WHERE CaseId=@caseId AND FormCode=@form AND PartyId=@partyId ORDER BY UpdatedAt DESC,Id DESC",
+            new { caseId = doc.CaseId, form = doc.FormCode, partyId = doc.PartyId }, transaction);
+        if (existing > 0)
+            return Results.Conflict(new { duplicatePartyDocument = true, existingDocumentId = existing, message = "มีเอกสารแบบฟอร์มนี้ของคู่ความรายนี้อยู่แล้ว กรุณาเปิดรายการเดิมเพื่อแก้ไข" });
+    }
+    var id = await db.InsertDocumentAsync(conn, doc, transaction);
+    transaction.Commit();
     doc.Id = id;
     return Results.Ok(doc);
 });
@@ -306,10 +344,37 @@ api.MapPut("/documents/{id:int}", async (int id, CaseDocument doc, DatabaseServi
 {
     using var conn = db.CreateConnection();
     doc.Id = id;
+    doc.PartyId = ResolveDocumentPartyId(doc);
+    await conn.OpenAsync();
+    using var transaction = conn.BeginTransaction(System.Data.IsolationLevel.Serializable);
+    var original = await conn.QuerySingleOrDefaultAsync<CaseDocument>(
+        "SELECT * FROM SL_CaseDocuments WITH (UPDLOCK,HOLDLOCK) WHERE Id=@id", new { id }, transaction);
+    if (original == null) return Results.NotFound();
+    var originalPartyId = ResolveDocumentPartyId(original);
+    if (original.CaseId != doc.CaseId || original.FormCode != doc.FormCode || originalPartyId != doc.PartyId)
+        return Results.Conflict(new { message = "ไม่สามารถเปลี่ยนคู่ความหรือแบบฟอร์มทับเอกสารเดิมได้ กรุณาสร้างเอกสารแยกสำหรับคู่ความที่เลือก" });
+    var partyForm = doc.FormCode is "(๙)" or "(๑๑)" or "(๑๑ ก.)";
+    if (partyForm && doc.PartyId is not > 0)
+        return Results.BadRequest(new { message = doc.FormCode == "(๙)" ? "เลือกลูกความจากทะเบียนคู่ความก่อนบันทึกใบแต่งทนาย" : "เลือกจำเลยจากทะเบียนคู่ความก่อนบันทึกคำให้การ" });
+    if (doc.PartyId is > 0)
+    {
+        var party = await conn.QuerySingleOrDefaultAsync<CaseParty>(
+            "SELECT * FROM SL_CaseParties WHERE Id=@partyId AND CaseId=@caseId",
+            new { partyId = doc.PartyId, caseId = doc.CaseId }, transaction);
+        if (party == null || ((doc.FormCode is "(๑๑)" or "(๑๑ ก.)") && party.PartySide != "จำเลย") ||
+            (doc.FormCode == "(๙)" && !party.IsOurClient))
+            return Results.BadRequest(new { message = "คู่ความที่เลือกไม่ได้เป็นลูกความหรือจำเลยในสำนวนนี้" });
+        var duplicate = await conn.ExecuteScalarAsync<int>(
+            "SELECT TOP 1 Id FROM SL_CaseDocuments WITH (UPDLOCK,HOLDLOCK) WHERE CaseId=@CaseId AND FormCode=@FormCode AND PartyId=@PartyId AND Id<>@Id",
+            doc, transaction);
+        if (duplicate > 0)
+            return Results.Conflict(new { duplicatePartyDocument = true, existingDocumentId = duplicate, message = "มีเอกสารแบบฟอร์มนี้ของคู่ความรายนี้อยู่แล้ว กรุณาเปิดรายการเดิมเพื่อแก้ไข" });
+    }
     DatabaseService.NormalizeDocumentThaiSpacing(doc);
-    await conn.ExecuteAsync(@"
+    var updated = await conn.ExecuteAsync(@"
         UPDATE SL_CaseDocuments SET
             CaseId = @CaseId,
+            PartyId = @PartyId,
             TemplateId = @TemplateId,
             FormCode = @FormCode,
             DocumentTitle = @DocumentTitle,
@@ -349,14 +414,22 @@ api.MapPut("/documents/{id:int}", async (int id, CaseDocument doc, DatabaseServi
             Status = @Status,
             UpdatedAt = SYSUTCDATETIME()
         WHERE Id = @Id;
-    ", doc);
+    ", doc, transaction);
+    if (updated != 1) return Results.NotFound();
+    transaction.Commit();
     return Results.Ok(doc);
 });
 
-api.MapDelete("/documents/{id:int}", async (int id, DatabaseService db) =>
+api.MapDelete("/documents/{id:int}", async (int id, DatabaseService db, FileStorage storage) =>
 {
-    using var conn = db.CreateConnection();
-    await conn.ExecuteAsync("DELETE FROM SL_CaseDocuments WHERE Id = @Id", new { Id = id });
+    using var conn = db.CreateConnection(); await conn.OpenAsync(); using var tx=conn.BeginTransaction(System.Data.IsolationLevel.Serializable);
+    var doc=await conn.QuerySingleOrDefaultAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments WITH(UPDLOCK) WHERE Id=@Id",new{Id=id},tx);
+    if(doc==null)return Results.NotFound();
+    var files=(await conn.QueryAsync<CaseFileAttachment>("SELECT Id,StorageKey FROM SL_CaseFileAttachments WITH(UPDLOCK,HOLDLOCK) WHERE DocumentId=@Id AND CaseId=@CaseId",new{Id=id,doc.CaseId},tx)).ToList();
+    var fileIds=files.Select(f=>f.Id).ToArray();
+    if(fileIds.Length>0)await conn.ExecuteAsync("DELETE FROM SL_AppointmentFiles WHERE FileId IN @fileIds; UPDATE SL_ClientChat SET FileId=NULL WHERE FileId IN @fileIds; UPDATE SL_LitigationEvents SET AttachmentId=NULL WHERE AttachmentId IN @fileIds; DELETE FROM SL_ClientShares WHERE FileId IN @fileIds; DELETE FROM SL_ClientDocuments WHERE FileId IN @fileIds; DELETE FROM SL_CaseFileAttachments WHERE Id IN @fileIds",new{fileIds},tx);
+    await conn.ExecuteAsync("DELETE FROM SL_CaseDocuments WHERE Id=@Id AND CaseId=@CaseId",new{Id=id,doc.CaseId},tx);tx.Commit();
+    foreach(var file in files)storage.Delete(file.StorageKey);
     return Results.Ok(new { Deleted = true });
 });
 
@@ -411,7 +484,7 @@ api.MapPut("/lawyers/{id:int}", async (int id, LawyerProfile model, DatabaseServ
     await conn.ExecuteAsync(@"
         UPDATE SL_UserAccounts
         SET FullName = @FullName, LicenseNo = @LicenseNo, CitizenId = @CitizenId, Phone = @Phone, OfficeName = @OfficeName
-        WHERE LawyerProfileId = @Id AND Role = N'Lawyer';
+        WHERE LawyerProfileId = @Id AND Role IN (N'Lawyer',N'Clerk');
     ", model, transaction);
     transaction.Commit();
     return Results.Ok(model);
@@ -484,7 +557,7 @@ api.MapPost("/auth/login", async (LoginRequest loginReq, HttpContext http, Datab
         await conn.ExecuteAsync("UPDATE SL_UserAccounts SET PasswordHash=@Hash WHERE Id=@Id", new { user.Id, Hash = AccountSecurity.Hash(loginReq.Password) });
     await AccountSecurity.SignIn(http, db, user);
     user.PasswordHash = "";
-    return Results.Ok(user.Role == "Client" ? (object)new { user.Id, user.Username, user.FullName, user.Role } : user);
+    return Results.Ok(user.Role is "Client" or "Prospect" ? (object)new { user.Id, user.Username, user.FullName, user.Role } : user);
 }).RequireRateLimiting("auth");
 
 // ลงทะเบียนสมาชิกทนายความใหม่ รับสิทธิ์ทดลองใช้งานฟรี 3 คดีทันที
@@ -876,6 +949,7 @@ api.MapPost("/files", async (HttpContext http, DatabaseService db, FileStorage s
         }
         file.StorageKey=storageKey;
         file.FileDataBase64="";
+        file.PageCount=await storage.PageCountAsync(storageKey);
     }
 
     var committed=false;
@@ -920,7 +994,7 @@ api.MapPut("/files/{id:int}/status", async (int id, CaseFileAttachment req, Data
     return Results.Ok(updated);
 });
 
-api.MapDelete("/files/{id:int}", async (int id, bool? detachLinks, DatabaseService db, FileStorage storage) =>
+var deleteCaseFile = async (int id, bool? detachLinks, DatabaseService db, FileStorage storage) =>
 {
     using var conn = db.CreateConnection();
     await conn.OpenAsync();
@@ -944,7 +1018,9 @@ api.MapDelete("/files/{id:int}", async (int id, bool? detachLinks, DatabaseServi
     transaction.Commit();
     storage.Delete(file.StorageKey);
     return Results.Ok(new { Deleted = true });
-});
+};
+api.MapDelete("/files/{id:int}", deleteCaseFile);
+api.MapPost("/files/{id:int}/delete", deleteCaseFile);
 
 // Stream Real Sample PDFs & Official Court Form PDFs for the Popup PDF Viewer Modal
 api.MapGet("/files/stream-sample/{key}", (string key) =>

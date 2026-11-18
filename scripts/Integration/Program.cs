@@ -134,6 +134,24 @@ try
     var pdfBytes=System.Text.Encoding.ASCII.GetBytes("%PDF-1.4\nTest judgment fixture\n%%EOF");
     var judgment=await Send("/api/files",new {caseId,fileTitle="Fixture judgment",storageType="PDF",mimeType="application/pdf",fileDataBase64=Convert.ToBase64String(pdfBytes),pageCount=1,formCode="(๓๑)",courtLevel="ศาลชั้นต้น",judgmentBlackCaseNo="TEST/2569",judgmentRedCaseNo="RED/2569",judgmentDate="2026-11-15"});
     var judgmentId=judgment["id"]!.GetValue<int>();
+    var originalKey=await db.ExecuteScalarAsync<string>("SELECT StorageKey FROM SL_CaseFileAttachments WHERE Id=@judgmentId",new{judgmentId});
+    try
+    {
+        foreach(var legacy in new[]{Convert.ToBase64String(pdfBytes),"data:application/pdf;base64,"+Convert.ToBase64String(pdfBytes)})
+        {
+            await db.ExecuteAsync("UPDATE SL_CaseFileAttachments SET StorageKey=NULL,FileDataBase64=@legacy WHERE Id=@judgmentId",new{legacy,judgmentId});
+            Check((await client.GetByteArrayAsync($"/api/files/{judgmentId}/content")).SequenceEqual(pdfBytes),"Legacy PDF preserves bytes");
+            using var rangeRequest=new HttpRequestMessage(HttpMethod.Get,$"/api/files/{judgmentId}/content");
+            rangeRequest.Headers.Range=new(0,4);
+            using var range=await client.SendAsync(rangeRequest);
+            Check(range.StatusCode==HttpStatusCode.PartialContent && await range.Content.ReadAsStringAsync()=="%PDF-","Legacy PDF supports byte ranges");
+        }
+        await db.ExecuteAsync("UPDATE SL_CaseFileAttachments SET FileDataBase64='broken!' WHERE Id=@judgmentId",new{judgmentId});
+        Check((await client.GetAsync($"/api/files/{judgmentId}/content")).StatusCode==HttpStatusCode.UnprocessableEntity,"Corrupt legacy data returns actionable error");
+        await db.ExecuteAsync("UPDATE SL_CaseFileAttachments SET StorageKey=@key WHERE Id=@judgmentId",new{key=Guid.NewGuid().ToString("N")+".bin",judgmentId});
+        Check((await client.GetAsync($"/api/files/{judgmentId}/content")).StatusCode==HttpStatusCode.NotFound,"Missing stored PDF returns 404");
+    }
+    finally { await db.ExecuteAsync("UPDATE SL_CaseFileAttachments SET StorageKey=@originalKey,FileDataBase64='' WHERE Id=@judgmentId",new{originalKey,judgmentId}); }
     using(var upload=new MultipartFormDataContent())
     {
         foreach(var pair in new Dictionary<string,string>{{"caseId",caseId.ToString()},{"fileTitle","Deletable fixture"},{"storageType","PDF"},{"mimeType","application/pdf"},{"pageCount","1"}})
@@ -146,7 +164,7 @@ try
         deleteFixtureKey=await db.ExecuteScalarAsync<string>("SELECT StorageKey FROM SL_CaseFileAttachments WHERE Id=@deletableId",new{deletableId});
         Check(!string.IsNullOrEmpty(deleteFixtureKey),"Disk storage key is persisted");
         Check((await client.GetByteArrayAsync($"/api/files/{deletableId}/content")).SequenceEqual(pdfBytes),"Deletable file is readable before delete");
-        using var deleted=await client.DeleteAsync($"/api/files/{deletableId}");
+        using var deleted=await client.PostAsync($"/api/files/{deletableId}/delete",null);
         Check(deleted.IsSuccessStatusCode,"Owner can delete unlinked file");
         Check((await client.GetAsync($"/api/files/{deletableId}/content")).StatusCode==HttpStatusCode.NotFound,"Deleted file is no longer served");
         Check(!File.Exists(Path.Combine("App_Data","Uploads",deleteFixtureKey!)),"Deleted file is removed from disk");
@@ -164,6 +182,7 @@ try
         Check((await other.PostAsJsonAsync("/api/auth/register",new {username=otherName,passwordHash=password,fullName=otherName,licenseNo="TEST",email=otherName+"@example.invalid"})).IsSuccessStatusCode,"Other-account fixture registered");
         Check((await other.PostAsJsonAsync("/api/auth/login",new {username=otherName,password})).IsSuccessStatusCode,"Other-account fixture login");
         Check((await other.GetAsync($"/api/personal-documents/{personalId}/content")).StatusCode==HttpStatusCode.NotFound,"Another lawyer cannot download personal files");
+        Check((await other.PostAsync($"/api/files/{judgmentId}/delete?detachLinks=true",null)).StatusCode==HttpStatusCode.NotFound,"POST deletion cannot cross case ownership");
         Check((await other.DeleteAsync($"/api/personal-documents/{personalId}")).StatusCode==HttpStatusCode.NotFound,"Another lawyer cannot delete personal files");
         Check((await other.GetAsync($"/api/client-records/{caseId}")).StatusCode==HttpStatusCode.NotFound,"Another lawyer cannot read client records");
         Check((await other.GetAsync($"/api/work-summary?caseId={caseId}")).StatusCode==HttpStatusCode.NotFound,"Another lawyer cannot report on this case");
@@ -172,6 +191,13 @@ try
             Check((await other.GetAsync($"/api/personal-documents/{personalId}/content")).StatusCode==HttpStatusCode.Forbidden,role+" cannot read lawyer's private files");
         }
     }
+    using(var crossOrigin=new HttpRequestMessage(HttpMethod.Post,$"/api/files/{judgmentId}/delete?detachLinks=true")) {
+        crossOrigin.Headers.Add("Origin","https://example.invalid");
+        Check((await client.SendAsync(crossOrigin)).StatusCode==HttpStatusCode.Forbidden,"POST deletion rejects foreign origin");
+    }
+    await db.ExecuteAsync("UPDATE SL_UserAccounts SET Role='Clerk' WHERE Id=@userId",new{userId});
+    try { Check((await client.PostAsync($"/api/files/{judgmentId}/delete?detachLinks=true",null)).StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Forbidden,"Clerk cannot use POST deletion"); }
+    finally { await db.ExecuteAsync("UPDATE SL_UserAccounts SET Role='Lawyer' WHERE Id=@userId",new{userId}); }
     Check((await client.GetByteArrayAsync($"/api/personal-documents/{personalId}/content")).SequenceEqual(pdfBytes),"Personal document download preserves PDF");
     Check((await client.GetAsync($"/api/personal-documents/{personalId+1000000}/content")).StatusCode==HttpStatusCode.NotFound,"Unavailable personal document not exposed");
     var summary=await client.GetFromJsonAsync<JsonNode>($"/api/work-summary?caseId={caseId}");
@@ -189,7 +215,8 @@ try
     await db.ExecuteAsync("UPDATE SL_LitigationEvents SET AttachmentId=@linkedFileId WHERE Id=@eventId",new{linkedFileId,eventId});
     await Send($"/api/appointments/{hearings[0].Id}/files",new{fileId=linkedFileId});
     Check((await client.DeleteAsync($"/api/files/{linkedFileId}")).StatusCode==HttpStatusCode.Conflict,"Linked file requires explicit detach confirmation");
-    using(var detached=await client.DeleteAsync($"/api/files/{linkedFileId}?detachLinks=true")) Check(detached.IsSuccessStatusCode,"Confirmed delete detaches file from linked records");
+    Check((await client.PostAsync($"/api/files/{linkedFileId}/delete",null)).StatusCode==HttpStatusCode.Conflict,"POST delete preserves linked-file guard");
+    using(var detached=await client.PostAsync($"/api/files/{linkedFileId}/delete?detachLinks=true",null)) Check(detached.IsSuccessStatusCode,"Confirmed delete detaches file from linked records");
     Check(await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_CaseFileAttachments WHERE Id=@linkedFileId",new{linkedFileId})==0
         && await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_AppointmentFiles WHERE FileId=@linkedFileId",new{linkedFileId})==0
         && await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_LitigationEvents WHERE AttachmentId=@linkedFileId",new{linkedFileId})==0,

@@ -3,6 +3,14 @@
  const A=App;
  async function request(url,method,body){const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await r.json().catch(()=>({}));if(!r.ok)throw Error(data.message||(r.status===401?'หมดเวลาการเข้าสู่ระบบ กรุณาเข้าสู่ระบบใหม่':'ดำเนินการไม่สำเร็จ กรุณาลองอีกครั้ง'));return data;}
  const S=window.StudioSave={busy:false,
+  prepareDocument(d){
+   const partyOf=x=>{let extra={};try{extra=JSON.parse(x.extraFieldsJson||'{}')||{};}catch{}return Number(extra.SelectedPartyId||extra.Form9DefendantPartyId||x.partyId||0);};
+   d.partyId=partyOf(d)||null;delete d.PartyId;
+   const original=A.getAccessibleDocuments().find(x=>Number(x.id)===Number(d.id));
+   if(original&&(Number(original.caseId)!==Number(d.caseId)||original.formCode!==d.formCode||partyOf(original)!==Number(d.partyId||0)))d.id=0;
+   if(!Number(d.id)&&d.partyId){const previous=A.getAccessibleDocuments().find(x=>Number(x.caseId)===Number(d.caseId)&&x.formCode===d.formCode&&partyOf(x)===Number(d.partyId));if(previous)throw Error('มีเอกสารแบบฟอร์มนี้ของคู่ความรายนี้แล้ว กรุณาเลือกเอกสารเดิมเพื่อแก้ไข');}
+   return d;
+  },
   async run(mode='draft',appointment=null){
    if(this.busy)return null;this.busy=true;let saved=null,archived=false,linked=false;
    let modal=document.getElementById('studioSaveStatus');if(!modal){modal=document.createElement('dialog');modal.id='studioSaveStatus';modal.className='studio-save-status';document.body.append(modal);}
@@ -13,13 +21,16 @@
    try{
     update('กำลังตรวจสอบและส่งข้อมูล กรุณารอสักครู่');
     A.formatAllClausesThaiSpacing();const d=A.collectCurrentDocFromInputs();
+    this.prepareDocument(d);
     if(!A.getAccessibleCases().some(c=>c.id===Number(d.caseId)))throw Error('กรุณาเลือกสำนวนคดีที่คุณมีสิทธิ์');
     if(!d.documentTitle?.trim())throw Error('กรุณาระบุชื่อเอกสาร');
+    if(['(๑๑)','(๑๑ ก.)'].includes(d.formCode)){let extra={};try{extra=JSON.parse(d.extraFieldsJson||'{}')||{};}catch{}if(!Number(extra.SelectedPartyId||extra.Form9DefendantPartyId))throw Error('เลือกจำเลยจากทะเบียนคู่ความก่อนบันทึก เพื่อแยกแบบร่างของจำเลยแต่ละคน');}
+    if(d.formCode==='(๙)'){let extra={};try{extra=JSON.parse(d.extraFieldsJson||'{}')||{};}catch{}if(!Number(extra.SelectedPartyId||extra.Form9DefendantPartyId))throw Error('เลือกลูกความจากทะเบียนคู่ความก่อนบันทึกใบแต่งทนาย เพื่อแยกเอกสารของลูกความแต่ละคน');}
     if(appointment&&d.caseId!==appointment.caseId)throw Error('เอกสารต้องเป็นคดีเดียวกับวันนัด');
     saved=await request('/api/documents'+(d.id?'/'+d.id:''),d.id?'PUT':'POST',d);A.state.currentDoc=saved;done++;update('บันทึกฉบับร่างแล้ว');
     if(mode==='archive'){await request('/api/documents/'+saved.id+'/archive','POST',{pageCount:document.querySelectorAll('#studioPaperPreview .court-page').length||1});archived=true;done++;update('จัดเก็บเข้าคลังสารบัญแล้ว');}
     if(appointment){await request('/api/appointments/'+appointment.id+'/files','POST',{documentId:saved.id});linked=true;done++;update('เชื่อมเอกสารกับวันนัดแล้ว');}
-    await A.loadDashboardData();A.populateStudioDropdowns();A.populateFilesFilterDropdowns();A.renderFilesDirectoryView();done++;update(appointment?'บันทึกและเชื่อมเอกสารประกอบวันนัดเรียบร้อย':archived?'จัดเก็บเอกสารฉบับล่าสุดเข้าคลังสารบัญแล้ว เปิดอ่านได้ครบทุกหน้า':'บันทึกฉบับร่างแล้ว สามารถกลับมาแก้ไขต่อได้');
+    await A.loadDashboardData();A.populateStudioDropdowns();A.populateFilesFilterDropdowns();A.renderFilesDirectoryView();window.CourtFormEditor?.updateDefendantDraftControl?.(A.state.currentDoc);done++;update(appointment?'บันทึกและเชื่อมเอกสารประกอบวันนัดเรียบร้อย':archived?'จัดเก็บเอกสารฉบับล่าสุดเข้าคลังสารบัญแล้ว เปิดอ่านได้ครบทุกหน้า':'บันทึกฉบับร่างแล้ว สามารถกลับมาแก้ไขต่อได้');
     modal.querySelector('h2').textContent='บันทึกสำเร็จ';modal.classList.remove('save-failed');modal.classList.add('save-complete');
     const actions=modal.querySelector('.save-status-actions');const close=document.createElement('button');close.className='sl-button primary';close.textContent='เรียบร้อย';close.onclick=()=>modal.close();actions.append(close);
     if(archived||linked){const open=document.createElement('button');open.className='sl-button';open.textContent=linked?'กลับไปวันนัด':'เปิดคลังสารบัญ';open.onclick=()=>{modal.close();if(linked)AppointmentFiles.back();else A.openCaseFilesDirectory(saved.caseId);};actions.append(open);}

@@ -1,0 +1,30 @@
+@font-face {
+  font-family: 'SmartLaws Menu';
+  src: url('/fonts/menu/NotoSansThai-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* Navigation only; editor values and court paper keep their document fonts. */
+@media screen {
+  .sl-ui :is(.sidebar .nav-item,.sidebar .nav-section-title,
+    .mobile-bottom-nav,.mobile-bottom-nav button,.mobile-bottom-nav a,
+    .ot-tabs button,.cp-tabs button,.tabs .tab,
+    .studio-mobile-panel-controls button,[role=tab],
+    .dh-shortcuts button,.top-actions a,.top-actions button,.cp-header nav a) {
+    font-family: 'SmartLaws Menu', Sarabun, Tahoma, sans-serif;
+    font-weight: 600;
+    font-style: normal;
+    font-synthesis: none;
+    letter-spacing: 0;
+    text-shadow: none;
+    line-height: 1.65;
+  }
+  .sl-ui .sidebar .nav-item { font-size: 15px; }
+  .sl-ui .sidebar .nav-item.active,
+  .sl-ui :is(.ot-tabs button.active,.cp-tabs button[aria-selected=true],.tabs .tab.active,[role=tab][aria-selected=true]) { font-weight: 700; }
+  .sl-ui .sidebar .nav-section-title { font-size: 11px; }
+  .sl-ui .mobile-bottom-nav { font-size: 12px; }
+  .sl-ui .mobile-bottom-nav :is(button,a) { font-size: inherit; }
+}

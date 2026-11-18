@@ -16,6 +16,8 @@
             if(!src)throw Error('รายการนี้ยังไม่มีไฟล์ PDF กรุณาอัปโหลดไฟล์ต้นฉบับเข้าคลังสำนวน');
             const response=await fetch(src,{signal:controller.signal});
             if(!response.ok){
+                const details=await response.json().catch(()=>null);
+                if(details?.message)throw Error(details.message+(details.reference?` (รหัสอ้างอิง ${details.reference})`:''));
                 if(response.status===401)throw Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
                 if(response.status===403)throw Error('บัญชีนี้ไม่มีสิทธิ์อ่านไฟล์ในสำนวนนี้');
                 if(response.status===404)throw Error('ไม่พบไฟล์ต้นฉบับ รายการนี้อาจเป็นลิงก์จากเครื่องเดิม กรุณาอัปโหลด PDF เข้าคลังสำนวน');

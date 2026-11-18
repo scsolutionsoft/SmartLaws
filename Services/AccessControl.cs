@@ -41,10 +41,12 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
         var http = ctx.HttpContext;
         var path = http.Request.Path.Value!.ToLowerInvariant();
         var write = !HttpMethods.IsGet(http.Request.Method);
+        var deleting = HttpMethods.IsDelete(http.Request.Method) ||
+            (HttpMethods.IsPost(http.Request.Method) && path.StartsWith("/api/files/") && path.EndsWith("/delete"));
         if (write && http.Request.Headers.Origin.FirstOrDefault() is { } origin &&
             (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri) || originUri.Authority != http.Request.Host.Value))
             return Results.StatusCode(403);
-        if (path is "/api/auth/login" or "/api/auth/register") return await next(ctx);
+        if (path is "/api/auth/login" or "/api/auth/register" or "/api/consultations/register") return await next(ctx);
         using var conn = db.CreateConnection();
         var user = await conn.QuerySingleOrDefaultAsync<UserAccount>("""
             SELECT u.* FROM SL_UserAccounts u JOIN SL_Sessions s ON s.UserId=u.Id
@@ -66,7 +68,8 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
             var identity = await conn.QuerySingleAsync<ClientIdentity>("SELECT * FROM SL_ClientIdentities WHERE UserId=@Id",user);
             if (path == "/api/auth/me" && !write)
                 return Results.Ok(new { user.Id,user.Username,user.FullName,user.Role,identity.MustChangePassword });
-            if (path != "/api/auth/logout" && !path.StartsWith("/api/client/")) return Results.StatusCode(403);
+            bool consultationMessages = IsConsultationMessagePath(path) && (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsPost(http.Request.Method));
+            if (path != "/api/auth/logout" && !path.StartsWith("/api/client/") && path != "/api/consultations/mine" && !consultationMessages) return Results.StatusCode(403);
             if (identity.MustChangePassword && path != "/api/client/password" && path != "/api/auth/logout")
                 return Results.Json(new {message="กรุณาเปลี่ยนรหัสผ่านเริ่มต้นก่อนดูข้อมูลคดี",mustChangePassword=true},statusCode:403);
             if (path.StartsWith("/api/client/") && path is not "/api/client/password" and not "/api/client/cases") {
@@ -75,6 +78,15 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
                 if(selected==null)return Results.NotFound(new{message="เลือกคดีที่คุณมีสิทธิ์เข้าถึง"});
                 http.Items["clientAccess"]=selected;
             }
+            return await next(ctx);
+        }
+        if (user.Role == "Prospect")
+        {
+            if (path == "/api/auth/me" && !write)
+                return Results.Ok(new { user.Id, user.Username, user.FullName, user.Phone, user.Role });
+            bool consultationRead = path == "/api/consultations/mine" && !write;
+            bool consultationMessages = IsConsultationMessagePath(path) && (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsPost(http.Request.Method));
+            if (path != "/api/auth/logout" && !consultationRead && !consultationMessages) return Results.StatusCode(403);
             return await next(ctx);
         }
         if (path.StartsWith("/api/client/")) return Results.StatusCode(403);
@@ -95,7 +107,9 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
         var area = parts.Length > 1 ? parts[1] : "";
         int routeId = int.TryParse(parts.ElementAtOrDefault(2), out var rid) ? rid : 0;
         if (area == "admin" && !admin) return Results.StatusCode(403);
-        if (area == "office" && (!lawyer || await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_LawOfficeMembers WHERE LawyerUserId=@Id AND IsActive=1",user)==1)) return Results.StatusCode(403);
+        // Office endpoints apply their own owner / office-admin checks because ordinary
+        // office lawyers still need the read-only form-9 lawyer directory.
+        if (area == "office" && !lawyer && !(clerk && path == "/api/office/form10-recipients")) return Results.StatusCode(403);
         if (area == "admin" && write && parts.ElementAtOrDefault(2) == "users" && int.TryParse(parts.ElementAtOrDefault(3),out var managedUser) && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_UserAccounts WHERE Id=@managedUser AND Role=N'Client'",new{managedUser})>0) return Results.StatusCode(403);
         if (admin && new[] { "cases", "documents", "files", "parties", "litigation", "signatures", "lawyers", "clerk-mappings" }.Contains(area)) return Results.StatusCode(403);
         if (area == "templates" && write && !admin) return Results.StatusCode(403);
@@ -112,24 +126,25 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
                 var cid = await conn.ExecuteScalarAsync<int>($"SELECT CaseId FROM {table} WHERE Id=@routeId", new { routeId });
                 if (!caseIds.Contains(cid)) return Results.NotFound();
                 var detachFileLinks = string.Equals(http.Request.Query["detachLinks"], "true", StringComparison.OrdinalIgnoreCase);
-                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_ClientChat WHERE FileId=@routeId",new{routeId})>0) return Results.Conflict(new{message="ไฟล์นี้เป็นเอกสารแนบในแชทลูกความ จึงยังลบแยกไม่ได้"});
-                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_AppointmentFiles WHERE FileId=@routeId",new{routeId})>0)
+                if (area == "files" && deleting && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_ClientChat WHERE FileId=@routeId",new{routeId})>0) return Results.Conflict(new{message="ไฟล์นี้เป็นเอกสารแนบในแชทลูกความ จึงยังลบแยกไม่ได้"});
+                if (area == "files" && deleting && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_AppointmentFiles WHERE FileId=@routeId",new{routeId})>0)
                     return Results.Conflict(new {message="ไฟล์นี้เชื่อมกับวันนัด กรุณายกเลิกการเชื่อมในวันนัดก่อนลบ"});
-                if (area == "documents" && write && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_CaseFileAttachments f JOIN SL_AppointmentFiles l ON l.FileId=f.Id WHERE f.DocumentId=@routeId",new{routeId})>0
-                    && (HttpMethods.IsDelete(http.Request.Method) || ctx.Arguments.OfType<CaseDocument>().Any(d=>d.CaseId!=cid)))
+                if (area == "documents" && write && !HttpMethods.IsDelete(http.Request.Method) && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_CaseFileAttachments f JOIN SL_AppointmentFiles l ON l.FileId=f.Id WHERE f.DocumentId=@routeId",new{routeId})>0
+                    && ctx.Arguments.OfType<CaseDocument>().Any(d=>d.CaseId!=cid))
                     return Results.Conflict(new {message="เอกสารนี้เชื่อมกับวันนัด จึงยังลบหรือย้ายคดีไม่ได้"});
                 if (clerk && area == "documents" && write && await conn.ExecuteScalarAsync<string>("SELECT Status FROM SL_CaseDocuments WHERE Id=@routeId", new { routeId }) != "ร่าง")
                     return Results.StatusCode(403);
-                if (area == "files" && HttpMethods.IsDelete(http.Request.Method) && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_LitigationEvents WHERE AttachmentId=@routeId", new { routeId }) > 0)
+                if (area == "files" && deleting && !detachFileLinks && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_LitigationEvents WHERE AttachmentId=@routeId", new { routeId }) > 0)
                     return Results.Conflict(new { message = "ไฟล์นี้เป็นหลักฐานอ้างอิงในขั้นตอนคดี จึงยังลบไม่ได้" });
             }
             if (int.TryParse(http.Request.Query["caseId"], out var queryCase) && !caseIds.Contains(queryCase)) return Results.NotFound();
             if (area == "files" && path.Contains("stream-sample")) return Results.NotFound();
-            if (clerk && (HttpMethods.IsDelete(http.Request.Method) || area == "litigation" && write)) return Results.StatusCode(403);
+            if (clerk && (deleting || area == "litigation" && write)) return Results.StatusCode(403);
         }
         if (area == "lawyers" && write)
         {
-            if (!lawyer || (path.EndsWith("/clerks") ? routeId != user.Id : routeId != user.LawyerProfileId)) return Results.StatusCode(403);
+            bool ownProfileUpdate = routeId == user.LawyerProfileId && (lawyer || clerk) && parts.Length == 3;
+            if ((!lawyer && !ownProfileUpdate) || (lawyer && (path.EndsWith("/clerks") ? routeId != user.Id : routeId != user.LawyerProfileId))) return Results.StatusCode(403);
         }
         if (area == "clerk-mappings" && write && (!lawyer || !mappings.Any(m => m.Id == routeId && m.LawyerUserId == user.Id))) return Results.StatusCode(403);
         if (area == "signatures" && write)
@@ -142,6 +157,7 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
             int cid = arg switch { CaseDocument d => d.CaseId, CaseParty p => p.CaseId, CaseFileAttachment f => f.CaseId, LitigationEvent e => e.CaseId, _ => 0 };
             if (cid > 0 && !caseIds.Contains(cid)) return Results.NotFound();
             if (arg is CaseDocument or CaseParty or LitigationEvent && cid <= 0) return Results.BadRequest(new { message = "กรุณาเลือกสำนวนคดี" });
+            if (arg is CaseDocument document && document.PartyId is > 0 && await conn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_CaseParties WHERE Id=@PartyId AND CaseId=@CaseId",document)==0) return Results.BadRequest(new{message="คู่ความที่เลือกไม่ได้อยู่ในสำนวนนี้"});
             if (arg is LawCase lc)
             {
                 if (HttpMethods.IsPost(http.Request.Method) && (string.IsNullOrWhiteSpace(lc.CourtName) || string.IsNullOrWhiteSpace(lc.PlaintiffName) || string.IsNullOrWhiteSpace(lc.DefendantName))) return Results.BadRequest(new { message = "กรุณาระบุศาลและคู่ความ" });
@@ -253,5 +269,11 @@ public class AccessControl(DatabaseService db) : IEndpointFilter
             dashboard.Remove("plaintiffLawyerCases"); dashboard.Remove("defendantLawyerCases");
         }
         return Results.Json(json, statusCode: (result as IStatusCodeHttpResult)?.StatusCode ?? 200);
+    }
+
+    private static bool IsConsultationMessagePath(string path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 4 && parts[0] == "api" && parts[1] == "consultations" && int.TryParse(parts[2], out _) && parts[3] == "messages";
     }
 }

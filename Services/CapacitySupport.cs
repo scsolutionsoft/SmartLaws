@@ -87,28 +87,111 @@ public static class CapacitySupport
 
     public static void MapFiles(RouteGroupBuilder api)
     {
+        api.MapPost("/files/{id:int}/replace-content", async (int id, HttpContext http, DatabaseService db, FileStorage storage) =>
+        {
+            if (!http.Request.HasFormContentType)
+                return Results.BadRequest(new { message = "กรุณาเลือกไฟล์ PDF, PNG หรือ JPG" });
+
+            var form = await FileStorage.ReadFormAsync(http);
+            var upload = form.Files.GetFile("file");
+            if (upload is null || upload.Length <= 0 || upload.Length > FileStorage.MaxFileBytes)
+                return Results.BadRequest(new { message = "ไฟล์ต้องมีขนาดมากกว่า 0 และไม่เกิน 1 GB" });
+
+            var extension = Path.GetExtension(upload.FileName).ToLowerInvariant();
+            var mimeType = extension switch
+            {
+                ".pdf" => "application/pdf",
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                _ => ""
+            };
+            if (mimeType.Length == 0)
+                return Results.BadRequest(new { message = "รองรับเฉพาะไฟล์ PDF, PNG และ JPG" });
+
+            string? newKey = null;
+            var committed = false;
+            try
+            {
+                await using (var input = upload.OpenReadStream())
+                    newKey = await storage.SaveAsync(input, upload.Length, http.RequestAborted);
+                if (!await storage.IsValidDocumentAsync(newKey, mimeType, upload.FileName, http.RequestAborted))
+                    return Results.BadRequest(new { message = "ไฟล์ PDF, PNG หรือ JPEG ไม่ถูกต้อง" });
+
+                var storageType = mimeType == "application/pdf" ? "PDF" : "IMAGE";
+                var pageCount = mimeType == "application/pdf" ? await storage.PageCountAsync(newKey) : 1;
+                using var conn = db.CreateConnection();
+                await conn.OpenAsync(http.RequestAborted);
+                using var transaction = conn.BeginTransaction(System.Data.IsolationLevel.Serializable);
+                var oldKey = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
+                    "SELECT StorageKey FROM SL_CaseFileAttachments WITH (UPDLOCK,HOLDLOCK) WHERE Id=@id",
+                    new { id }, transaction, cancellationToken: http.RequestAborted));
+                var changed = await conn.ExecuteAsync(new CommandDefinition("""
+                    UPDATE SL_CaseFileAttachments SET
+                        StorageType=@storageType, FileUrlOrPath='', FileDataBase64='', StorageKey=@newKey,
+                        MimeType=@mimeType, PageCount=@pageCount
+                    WHERE Id=@id
+                    """, new { id, storageType, newKey, mimeType, pageCount }, transaction,
+                    cancellationToken: http.RequestAborted));
+                if (changed != 1) return Results.NotFound();
+                transaction.Commit();
+                committed = true;
+                if (!string.IsNullOrWhiteSpace(oldKey) && FileStorage.IsValidKey(oldKey) &&
+                    !string.Equals(oldKey, newKey, StringComparison.OrdinalIgnoreCase))
+                    storage.Delete(oldKey);
+
+                var updated = await conn.QuerySingleAsync<CaseFileAttachment>(new CommandDefinition(
+                    $"SELECT {FileColumns} FROM SL_CaseFileAttachments f WHERE f.Id=@id", new { id },
+                    cancellationToken: http.RequestAborted));
+                return Results.Ok(updated);
+            }
+            finally
+            {
+                if (!committed) storage.Delete(newKey);
+            }
+        });
+
         api.MapGet("/files/{id:int}/content", async (int id, HttpContext http, DatabaseService db, FileStorage storage) =>
         {
             using var conn = db.CreateConnection();
             var file = await conn.QuerySingleOrDefaultAsync<FileContentLocation>(new CommandDefinition(
                 "SELECT MimeType,StorageKey FROM SL_CaseFileAttachments WHERE Id=@id AND (StorageKey IS NOT NULL OR DATALENGTH(FileDataBase64)>0)", new {id}, cancellationToken:http.RequestAborted));
             if (file is null || file.MimeType is not ("application/pdf" or "image/png" or "image/jpeg")) return Results.NotFound();
-            if(file.StorageKey is not null)
+            FileStream? prepared = null;
+            try
             {
-                try{return Results.File(storage.OpenRead(file.StorageKey),file.MimeType,enableRangeProcessing:true);}
-                catch(FileNotFoundException){return Results.NotFound();}
-            }
-            // The access filter authorizes the file's case before this result is executed.
-            return Results.Stream(async output => {
+                if (!string.IsNullOrWhiteSpace(file.StorageKey))
+                    return Results.File(storage.OpenRead(file.StorageKey),file.MimeType,enableRangeProcessing:true);
+                // Validate legacy data before starting the HTTP response. A temporary file
+                // keeps memory bounded and also supports PDF range requests on IIS.
+                prepared = new FileStream(Path.Combine(Path.GetTempPath(), $"smartlaws-preview-{Guid.NewGuid():N}.tmp"),
+                    FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 81920,
+                    FileOptions.Asynchronous | FileOptions.DeleteOnClose);
                 await using var connection = db.CreateConnection();
                 await connection.OpenAsync(http.RequestAborted);
                 await using var command = connection.CreateCommand();
                 command.CommandText = "SELECT FileDataBase64 FROM SL_CaseFileAttachments WHERE Id=@id";
                 command.Parameters.AddWithValue("@id",id);
                 await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, http.RequestAborted);
-                if (await reader.ReadAsync(http.RequestAborted))
-                    await DecodeBase64Async(reader.GetTextReader(0),output,http.RequestAborted);
-            }, contentType:file.MimeType);
+                if (!await reader.ReadAsync(http.RequestAborted) || await reader.IsDBNullAsync(0, http.RequestAborted))
+                    throw new FileNotFoundException();
+                await DecodeBase64Async(reader.GetTextReader(0),prepared,http.RequestAborted);
+                if (prepared.Length == 0) throw new InvalidDataException("Empty document");
+                prepared.Position = 0;
+                var result = Results.File(prepared, file.MimeType, enableRangeProcessing:true);
+                prepared = null; // The file result owns and disposes the stream.
+                return result;
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+            {
+                http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("FilePreview")
+                    .LogWarning(error, "Cannot read case attachment {FileId}; request {TraceId}", id, http.TraceIdentifier);
+                var missing = error is FileNotFoundException or DirectoryNotFoundException;
+                return Results.Json(new { message = missing
+                    ? "ไม่พบไฟล์ต้นฉบับบนเซิร์ฟเวอร์ กรุณาให้ผู้ดูแลตรวจสอบโฟลเดอร์จัดเก็บไฟล์หรือกู้คืนจากข้อมูลสำรอง"
+                    : "ไม่สามารถอ่านไฟล์ต้นฉบับได้ กรุณาให้ผู้ดูแลตรวจสอบข้อมูลไฟล์และสิทธิ์อ่านโฟลเดอร์จัดเก็บ",
+                    reference = http.TraceIdentifier }, statusCode: missing ? 404 : 422);
+            }
+            finally { if (prepared is not null) await prepared.DisposeAsync(); }
         });
     }
 

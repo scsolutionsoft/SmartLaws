@@ -145,6 +145,7 @@ public class DatabaseService
             CREATE TABLE SL_CaseDocuments (
                 Id INT IDENTITY(1,1) PRIMARY KEY,
                 CaseId INT NOT NULL,
+                PartyId INT NULL,
                 TemplateId INT NOT NULL DEFAULT 1,
                 FormCode NVARCHAR(30) NOT NULL,
                 DocumentTitle NVARCHAR(300) NOT NULL,
@@ -309,6 +310,13 @@ public class DatabaseService
         ";
 
         await conn.ExecuteAsync(createTablesSql);
+        await conn.ExecuteAsync("IF COL_LENGTH('SL_CaseDocuments','PartyId') IS NULL ALTER TABLE SL_CaseDocuments ADD PartyId INT NULL;");
+        await conn.ExecuteAsync("""
+            UPDATE SL_CaseDocuments SET PartyId=TRY_CONVERT(INT,COALESCE(JSON_VALUE(ExtraFieldsJson,'$.SelectedPartyId'),JSON_VALUE(ExtraFieldsJson,'$.Form9DefendantPartyId')))
+            WHERE PartyId IS NULL AND ISJSON(ExtraFieldsJson)=1 AND FormCode IN(N'(๙)',N'(๑๑)',N'(๑๑ ก.)');
+            IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('SL_CaseDocuments') AND name='IX_CaseDocuments_CaseFormParty')
+              CREATE INDEX IX_CaseDocuments_CaseFormParty ON SL_CaseDocuments(CaseId,FormCode,PartyId,UpdatedAt DESC) WHERE PartyId IS NOT NULL;
+            """);
         await SeedInitialDataAsync(conn);
         await SeedMembershipAndFileDirectoryAsync(conn);
         await NormalizeExistingDatabaseRecordsAsync(conn);
@@ -1197,12 +1205,12 @@ public class DatabaseService
         });
     }
 
-    public async Task<int> InsertDocumentAsync(SqlConnection conn, CaseDocument doc)
+    public async Task<int> InsertDocumentAsync(SqlConnection conn, CaseDocument doc, SqlTransaction? transaction = null)
     {
         NormalizeDocumentThaiSpacing(doc);
         return await conn.ExecuteScalarAsync<int>(@"
             INSERT INTO SL_CaseDocuments (
-                CaseId, TemplateId, FormCode, DocumentTitle, DocumentSubTitle, LawyerRoleInDoc,
+                CaseId, PartyId, TemplateId, FormCode, DocumentTitle, DocumentSubTitle, LawyerRoleInDoc,
                 DocDay, DocMonth, DocYear, RequesterFullName, RequesterStatus, RequesterCitizenId,
                 RequesterRace, RequesterNationality, RequesterOccupation, RequesterAge,
                 RequesterHouseNo, RequesterMoo, RequesterRoad, RequesterSoi, RequesterNearBy,
@@ -1212,7 +1220,7 @@ public class DatabaseService
             )
             OUTPUT INSERTED.Id
             VALUES (
-                @CaseId, @TemplateId, @FormCode, @DocumentTitle, @DocumentSubTitle, @LawyerRoleInDoc,
+                @CaseId, @PartyId, @TemplateId, @FormCode, @DocumentTitle, @DocumentSubTitle, @LawyerRoleInDoc,
                 @DocDay, @DocMonth, @DocYear, @RequesterFullName, @RequesterStatus, @RequesterCitizenId,
                 @RequesterRace, @RequesterNationality, @RequesterOccupation, @RequesterAge,
                 @RequesterHouseNo, @RequesterMoo, @RequesterRoad, @RequesterSoi, @RequesterNearBy,
@@ -1220,7 +1228,7 @@ public class DatabaseService
                 @ClausesJson, @ExtraFieldsJson, @ClosingPrayer, @SignerName, @SignerRole, @DrafterName, @TypistName,
                 @SignatureImageBase64, @DrafterSignatureBase64, @TypistSignatureBase64, @UseThaiNumerals, @Status
             );
-        ", doc);
+        ", doc, transaction);
     }
 
     private static string GenerateSvgSignatureDataUrl(string name, string colorHex)

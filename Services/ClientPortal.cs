@@ -274,14 +274,15 @@ public static class ClientPortal
             {
                 await using var stream=new MemoryStream(legacyBytes,false);
                 key=await storage.SaveAsync(stream,legacyBytes.Length,h.RequestAborted);
+                if(!await storage.IsValidDocumentAsync(key,r.MimeType??"application/pdf",r.FileName??"file.pdf",h.RequestAborted))return Results.BadRequest(new{message="ไฟล์ PDF / PNG / JPG ไม่ถูกต้อง"});
             }
             int? fileId=null;
             if(key!=null)
             {
                 fileId=await c.QuerySingleAsync<int>("""
                     INSERT INTO SL_CaseFileAttachments(CaseId,DirectoryIndexNo,FormCode,DirectoryCategoryName,FileTitle,StorageType,FileStatus,FileUrlOrPath,FileDataBase64,StorageKey,MimeType,PageCount,UploadedBy,Remark)
-                    OUTPUT INSERTED.Id VALUES(@caseId,99,N'แชทลูกความ',N'เอกสารจากการติดต่อกับลูกความ',@FileName,@storage,N'รับจากแชท',N'',N'',@key,@MimeType,1,@actor,N'ไฟล์แนบในการสนทนาทนายและลูกความ')
-                    """,new{caseId,FileName=r.FileName??"ไฟล์แนบ",storage=r.MimeType=="application/pdf"?"PDF":"IMAGE",key,MimeType=r.MimeType??"application/pdf",actor=sender.FullName},tx);
+                    OUTPUT INSERTED.Id VALUES(@caseId,99,N'แชทลูกความ',N'เอกสารจากการติดต่อกับลูกความ',@FileName,@storage,N'รับจากแชท',N'',N'',@key,@MimeType,@pages,@actor,N'ไฟล์แนบในการสนทนาทนายและลูกความ')
+                    """,new{caseId,FileName=r.FileName??"ไฟล์แนบ",storage=r.MimeType=="application/pdf"?"PDF":"IMAGE",key,MimeType=r.MimeType??"application/pdf",pages=await storage.PageCountAsync(key),actor=sender.FullName},tx);
                 await c.ExecuteAsync("INSERT INTO SL_ClientShares(ClientUserId,CaseId,FileId) VALUES(@clientId,@caseId,@fileId)",new{clientId,caseId,fileId},tx);
             }
             var id=await c.QuerySingleAsync<int>("INSERT INTO SL_ClientChat(ClientUserId,CaseId,SenderId,Body,FileId,RequestId) OUTPUT INSERTED.Id VALUES(@clientId,@caseId,@sender,@body,@fileId,@RequestId)",new{clientId,caseId,sender=sender.Id,body=r.Body?.Trim()??"",fileId,r.RequestId},tx);

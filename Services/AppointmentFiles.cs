@@ -27,13 +27,27 @@ public static class AppointmentFiles
             var doc=await c.QuerySingleOrDefaultAsync<CaseDocument>("SELECT * FROM SL_CaseDocuments WITH(UPDLOCK) WHERE Id=@id",new{id},tx);
             if(doc==null||!Allowed(h,doc.CaseId))return Results.NotFound();
             var fid=await c.ExecuteScalarAsync<int>("SELECT TOP 1 Id FROM SL_CaseFileAttachments WITH(UPDLOCK) WHERE DocumentId=@Id AND CaseId=@CaseId AND StorageType='COURT_FORM' ORDER BY Id",doc,tx);
-            var p=new{doc.CaseId,doc.Id,doc.FormCode,doc.DocumentTitle,doc.Status,fid,request.PageCount,ordinal=int.TryParse(string.Concat(doc.FormCode.Where(char.IsDigit).Select(ch=>(int)char.GetNumericValue(ch))),out var n)?n:1,actor=AccountSecurity.User(h).FullName};
+            var directory=doc.FormCode switch
+            {
+                "(๔)"=>(4,"คำฟ้อง"),"(๕)"=>(5,"คำขอท้ายคำฟ้องแพ่ง"),"(๖)"=>(6,"คำขอท้ายคำฟ้องอาญา"),
+                "(๘)"=>(8,"บัญชีทรัพย์"),"(๙)"=>(9,"ใบแต่งทนายความ"),"(๑๐)"=>(10,"ใบมอบฉันทะ"),
+                "(๑๑)" or "(๑๑ ก.)"=>(11,"คำให้การจำเลย"),"(๑๒)"=>(12,"หมายเรียกคดีมโนสาเร่"),
+                "(๑๓)"=>(13,"หมายเรียกคดีแพ่งสามัญ"),"(๑๔)"=>(14,"หมายเรียกคดีอาญา"),
+                "(๑๕)"=>(15,"บัญชีระบุพยาน"),_ => (7,"คำร้อง / คำแถลง / คำขอ")
+            };
+            var party=doc.PartyId is >0
+                ? await c.QuerySingleOrDefaultAsync<CaseParty>("SELECT * FROM SL_CaseParties WHERE Id=@PartyId AND CaseId=@CaseId",doc,tx)
+                : null;
+            var partyLabel=party==null?"":$" · {party.PartySide}ที่ {party.PartyOrder} {party.FullName}";
+            var fileTitle=$"{doc.DocumentTitle}{partyLabel}";
+            if(fileTitle.Length>300)fileTitle=fileTitle[..300];
+            var p=new{doc.CaseId,doc.Id,doc.FormCode,doc.DocumentTitle,doc.Status,fid,request.PageCount,fileTitle,directoryCategory=directory.Item2,ordinal=directory.Item1,actor=AccountSecurity.User(h).FullName};
             if(fid==0)fid=await c.QuerySingleAsync<int>("""
                 INSERT INTO SL_CaseFileAttachments(CaseId,DocumentId,DirectoryIndexNo,FormCode,DirectoryCategoryName,FileTitle,StorageType,FileStatus,FileUrlOrPath,FileDataBase64,MimeType,PageCount,UploadedBy,Remark,CreatedAt)
-                OUTPUT INSERTED.Id VALUES(@CaseId,@Id,@ordinal,@FormCode,@DocumentTitle,@DocumentTitle,'COURT_FORM',@Status,'','','text/html',@PageCount,@actor,N'เอกสารจากสตูดิโอ แสดงเนื้อหาฉบับล่าสุดครบทุกหน้า',SYSUTCDATETIME())
+                OUTPUT INSERTED.Id VALUES(@CaseId,@Id,@ordinal,@FormCode,@directoryCategory,@fileTitle,'COURT_FORM',@Status,'','','text/html',@PageCount,@actor,N'เอกสารจากสตูดิโอ แสดงเนื้อหาฉบับล่าสุดครบทุกหน้า',SYSUTCDATETIME())
                 """,p,tx);
             else await c.ExecuteAsync("""
-                UPDATE SL_CaseFileAttachments SET FormCode=@FormCode,DirectoryIndexNo=@ordinal,FileTitle=@DocumentTitle,
+                UPDATE SL_CaseFileAttachments SET FormCode=@FormCode,DirectoryIndexNo=@ordinal,DirectoryCategoryName=@directoryCategory,FileTitle=@fileTitle,
                 FileStatus=@Status,FileUrlOrPath='',FileDataBase64='',MimeType='text/html',PageCount=@PageCount,
                 Remark=N'เอกสารจากสตูดิโอ แสดงเนื้อหาฉบับล่าสุดครบทุกหน้า' WHERE Id=@fid
                 """,p,tx);

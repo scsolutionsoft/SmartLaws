@@ -109,8 +109,8 @@ public static class IdentityDocuments
                 if(key==null)return Results.BadRequest(new{message="ระบุไฟล์ PDF / PNG / JPG ที่ถูกต้อง ขนาดไม่เกิน 1 GB"});
                 var id=await c.QuerySingleAsync<int>("""
                     INSERT INTO SL_CaseFileAttachments(CaseId,DirectoryIndexNo,FormCode,DirectoryCategoryName,FileTitle,StorageType,FileStatus,FileUrlOrPath,FileDataBase64,StorageKey,MimeType,PageCount,UploadedBy,Remark)
-                    OUTPUT INSERTED.Id VALUES(@caseId,99,N'เอกสารลูกความ',N'เอกสารประจำตัวลูกความ',@title,@storage,N'จัดเก็บแล้ว',N'',N'',@key,@mimeType,1,@actor,N'เอกสารประกอบของลูกความ เชื่อมกับคู่ความและสำนวน')
-                    """,new{caseId,title=incoming.Name,storage=incoming.MimeType=="application/pdf"?"PDF":"IMAGE",key,mimeType=incoming.MimeType,actor=AccountSecurity.User(h).FullName},tx);
+                    OUTPUT INSERTED.Id VALUES(@caseId,99,N'เอกสารลูกความ',N'เอกสารประจำตัวลูกความ',@title,@storage,N'จัดเก็บแล้ว',N'',N'',@key,@mimeType,@pages,@actor,N'เอกสารประกอบของลูกความ เชื่อมกับคู่ความและสำนวน')
+                    """,new{caseId,title=incoming.Name,storage=incoming.MimeType=="application/pdf"?"PDF":"IMAGE",key,mimeType=incoming.MimeType,pages=await storage.PageCountAsync(key),actor=AccountSecurity.User(h).FullName},tx);
                 await c.ExecuteAsync("INSERT INTO SL_ClientDocuments(FileId,CaseId,PartyId,Kind) VALUES(@id,@caseId,@partyId,@kind)",new{id,caseId,partyId,kind},tx);
                 tx.Commit();committed=true;return Results.Ok(new{id});
             }

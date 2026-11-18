@@ -20,8 +20,8 @@
             }
             const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: data.username, password: data.password }) });
             if (!r.ok) throw Error(r.status === 429 ? 'ลองใหม่ในอีก 1 นาที' : (await r.json()).message || 'เข้าสู่ระบบไม่สำเร็จ');
-            const user = await r.json(); location.replace(user.role === 'Client' ? '/client.html' : '/');
+            const user = await r.json(); location.replace(user.role === 'Client' ? '/client.html' : user.role === 'Prospect' ? '/consultation.html' : '/');
         } catch (err) { error.textContent = err.message || 'เชื่อมต่อไม่สำเร็จ กรุณาลองใหม่'; } finally { submit.disabled = false; }
     };
-    fetch('/api/auth/me').then(async r => { if (r.ok) { const user=await r.json(); location.replace(user.role==='Client'?'/client.html':'/'); } }).catch(() => {});
+    fetch('/api/auth/me').then(async r => { if (r.ok) { const user=await r.json(); location.replace(user.role==='Client'?'/client.html':user.role==='Prospect'?'/consultation.html':'/'); } }).catch(() => {});
 })();

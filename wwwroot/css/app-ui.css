@@ -1,0 +1,175 @@
+/* Shared interface styles. Screen-only: court previews retain their print typography. */
+@media screen {
+  body.sl-ui {
+    --ui-ink: var(--ink, #202f40);
+    --ui-muted: #617587;
+    --ui-accent: var(--accent, #0f766e);
+    --ui-soft: var(--accent-soft, #e8f4f1);
+    --ui-line: var(--line, #dce5ec);
+    --ui-surface: var(--surface, #fff);
+    --ui-canvas: var(--canvas, #f3f6f9);
+    font-family: Sarabun, Tahoma, sans-serif;
+    line-height: 1.7;
+    background: var(--ui-canvas);
+    color: var(--ui-ink);
+  }
+  .sl-ui[data-theme=admin-dark], .sl-ui[data-role=Admin]:not([data-theme]) {
+    --ui-muted: #afbdca; --ui-ink: var(--ink,#e5eaf0);
+    --ui-surface: var(--surface,#242b35); --ui-canvas: var(--canvas,#171c24);
+    --ui-line: var(--line,#39434f); --ui-soft: var(--accent-soft,#193b43);
+  }
+  .sl-ui .main-area { width: calc(100% - 280px); min-width: 0; }
+  .sl-ui .main-area>div:has(>#workspaceView) { width: 100%; min-width: 0; padding: 26px 30px; }
+  .sl-ui #workspaceView { width: 100%; min-width: 0; gap: 22px; }
+  .sl-ui :where(.sl-grid,.sl-stack,.cp-grid,.cp-stack)>* { min-width: 0; }
+  .sl-ui :where(.sl-card,.cp-card,.pane,.auth,.ot-person) {
+    border-color: var(--ui-line); border-radius: 18px;
+    box-shadow: 0 4px 20px #19364c06;
+  }
+  .sl-ui #workspaceView .sl-card { padding: 24px; border-radius: 18px; }
+  .sl-ui :where(#workspaceView,.cp-main,.shell) :where(h1,h2,h3) {
+    text-wrap: pretty; overflow-wrap: anywhere;
+  }
+  .sl-ui #workspaceView .sl-card h2 { font-size: 20px; line-height: 1.5; margin-bottom: 12px; }
+  .sl-ui :where(.sl-card,.cp-card,.pane)>.sl-row:first-child { margin-bottom: 16px; gap: 14px; }
+  .sl-ui :where(.sl-eyebrow,.cp-eyebrow,.eyebrow) { font-size: 11px; letter-spacing: .12em; }
+  .sl-ui :where(.sl-muted,.cp-muted) { color: var(--ui-muted); line-height: 1.8; }
+  .sl-ui :where(.sl-row,.cp-row,.toolbar) { row-gap: 10px; }
+  .sl-ui :where(.sl-form,.form,.case-form) { gap: 18px; }
+  .sl-ui :where(.sl-label,.cp-label,.ot-form label) { gap: 8px; font-size: 14px; line-height: 1.6; }
+  .sl-ui :where(.sl-label,.cp-label,.ot-form,.form,.case-form) :where(input,select,textarea),
+  .sl-ui .sl-input {
+    border: 1px solid var(--ui-line); border-radius: 10px;
+    background: var(--ui-surface); color: var(--ui-ink);
+    padding: 11px 13px; min-height: 44px; min-width: 0; max-width: 100%;
+  }
+  .sl-ui :where(.sl-label,.cp-label,.form,.case-form) :where(input,select,textarea) { font: inherit; font-weight: 400; }
+  .sl-ui input:where([type=checkbox],[type=radio]) { accent-color: var(--ui-accent); }
+  .sl-ui :where(.sl-label,.cp-label,.form,.case-form) input:where([type=checkbox],[type=radio]) { min-height: 0; padding: 0; width: auto; }
+  .sl-ui :where(.sl-label,.cp-label,.form,.case-form) textarea { resize: vertical; line-height: 1.8; }
+  .sl-ui :where(input,select,textarea):focus-visible:not(.court-page *, .court-paper-wrapper *, .print-only-root *) {
+    outline: 3px solid color-mix(in srgb,var(--ui-accent) 23%,transparent);
+    outline-offset: 2px; border-color: var(--ui-accent);
+  }
+  .sl-ui :where(button,a):focus-visible:not(.court-page *, .print-only-root *) {
+    outline: 3px solid var(--ui-accent); outline-offset: 3px;
+  }
+  .sl-ui :where(.sl-button,.cp-button,.ot-primary,.ot-danger,.primary,.secondary,.quiet) {
+    min-height: 44px; border-radius: 11px; padding: 10px 16px;
+    font-size: 14px; line-height: 1.5; font-weight: 600; cursor: pointer;
+    transition: box-shadow .16s, border-color .16s, background-color .16s;
+  }
+  .sl-ui :where(.sl-button,.cp-button):not(.primary):not(.danger):not(.subtle) { background: var(--ui-surface); color: var(--ui-ink); border-color: var(--ui-line); }
+  .sl-ui :where(.sl-button,.cp-button).primary { background: var(--ui-accent); border-color: var(--ui-accent); color: #fff; box-shadow: 0 3px 10px #123c4212; }
+  .sl-ui :where(.sl-button,.cp-button):hover:not(:disabled) { border-color: var(--ui-accent); }
+  .sl-ui button:disabled { cursor: default; opacity: .55; }
+  .sl-ui .sl-button.danger { background: #fff3f3; border-color: #f0ced2; color: #aa3046; }
+  .sl-ui :where(.sl-pill,.cp-badge,.cal-status) { line-height: 1.6; font-size: 12px; font-weight: 500; padding: 4px 10px; }
+  .sl-ui :where(.sl-note,.cp-note,.notice) { border-radius: 12px; padding: 15px 18px; line-height: 1.8; }
+  .sl-ui :where(.sl-empty,.cp-empty,.empty) { border: 1px dashed var(--ui-line); border-radius: 12px; background: var(--ui-canvas); color: var(--ui-muted); padding: 30px 20px; line-height: 1.9; }
+  .sl-ui :where(.sl-table-wrap,.cal-grid-wrap) { max-width: 100%; border: 1px solid var(--ui-line); border-radius: 12px; overflow: auto; }
+  .sl-ui .sl-table { font-size: 14px; }
+  .sl-ui .sl-table th { padding: 13px 15px; background: var(--ui-soft); color: var(--ui-accent); font-weight: 600; white-space: nowrap; }
+  .sl-ui .sl-table td { padding: 15px; vertical-align: middle; line-height: 1.75; }
+  .sl-ui .sl-table tbody tr:hover { background: color-mix(in srgb,var(--ui-accent) 4%,var(--ui-surface)); }
+  .sl-ui .sl-list li { padding: 17px 0; }
+  .sl-ui .sl-list p { overflow-wrap: anywhere; }
+  .sl-ui :where(.sl-dialog,.ot-mini,.studio-save-status) { border: 1px solid var(--ui-line); border-radius: 20px; background: var(--ui-surface); color: var(--ui-ink); max-height: 92dvh; overflow-y: auto; }
+  .sl-ui :where(.sl-dialog,.ot-mini,.studio-save-status)::backdrop { background: #102338a6; backdrop-filter: blur(4px); }
+  .sl-ui .sl-dialog-body { padding: 28px; }
+  .sl-ui #workspaceDialog h2 { font-size: 22px; line-height: 1.5; margin: 0 0 20px; }
+  .sl-ui #workspaceDialog .sl-form>.sl-row:last-child { padding-top: 16px; border-top: 1px solid var(--ui-line); }
+  .sl-ui .sl-steps { gap: 6px; margin: 20px 0 26px; }
+  .sl-ui .sl-step { height: 6px; }
+  .sl-ui .topbar { padding: 16px 24px; flex-wrap: wrap; gap: 14px; }
+  .sl-ui #pageHeaderTitle { font-size: 22px; font-weight: 700; line-height: 1.5; }
+  .sl-ui #pageHeaderSubtitle { font-size: 12px; margin-top: 4px; color: var(--ui-muted); }
+  .sl-ui .sidebar .nav-item { min-height: 46px; font-size: 14px; border-radius: 10px; margin-top: 5px; margin-bottom: 5px; }
+  .sl-ui .sidebar .nav-item.active { box-shadow: 0 4px 12px #0001; }
+  .sl-ui .sl-themes { gap: 14px; }
+  .sl-ui .sl-theme { padding: 14px; border-radius: 14px; background: var(--ui-surface); color: var(--ui-ink); }
+  .sl-ui .sl-theme[aria-pressed=true] { box-shadow: 0 0 0 2px var(--ui-soft); }
+  .sl-ui .sl-theme[aria-pressed=true]::after { content: ' ✓'; color: var(--ui-accent); font-weight: 700; }
+  .sl-ui :where(.community-thread,.cp-thread,.thread) { border: 1px solid var(--ui-line); background: var(--ui-canvas); border-radius: 14px; padding: 18px; }
+  .sl-ui :where(.community-bubble,.cp-message,.message) { line-height: 1.85; box-shadow: 0 2px 8px #15394c04; }
+  .sl-ui .community-news { border-top: 3px solid var(--ui-accent); }
+  .sl-ui :where(#view-cases,#view-files,#view-templates,#view-subscription,#view-backoffice,#view-esign,#view-batchprint)>:where(.bg-white) { border-radius: 18px; border-color: var(--ui-line); box-shadow: 0 4px 20px #19364c06; }
+  .sl-ui .main-area section[id^=view-]>:where(.bg-white):first-child { border-top: 3px solid var(--ui-accent); }
+  .sl-ui #studioEditorPanel { border-radius: 16px; border-top: 3px solid var(--ui-accent); }
+  .sl-ui .main-area section[id^=view-] :where(input,select):not([type=checkbox],[type=radio],[type=range],[type=color],.editor-panel *, .court-paper-wrapper *) {
+    min-height: 42px; border-radius: 9px; border-color: var(--ui-line);
+  }
+  .sl-ui .main-area section[id^=view-] :where(button):not(.editor-panel *, .court-paper-wrapper *, .cal-day *, .cal-date, .cal-event, .cal-more) { min-height: 36px; }
+  .sl-ui .main-area section[id^=view-] :where(.overflow-x-auto) { border-radius: 12px; max-width: 100%; }
+  .sl-ui .main-area section[id^=view-] table:not(.court-paper-wrapper *) { font-size: 14px; line-height: 1.75; }
+  .sl-ui .main-area section[id^=view-] th:not(.court-paper-wrapper *) { padding-top: 14px; padding-bottom: 14px; }
+  .sl-ui .main-area section[id^=view-] td:not(.court-paper-wrapper *) { padding-top: 14px; padding-bottom: 14px; }
+  .sl-ui #view-files .flex:has(>div>#filesFilterCaseSelect) { display: grid; width: 100%; grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .sl-ui #view-files .flex:has(>div>#filesFilterCaseSelect)>div { min-width: 0; }
+  .sl-ui #view-files select { width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+  body.sl-ui>[id$=Modal]>.bg-white { border-radius: 18px; }
+  .sl-ui .ot-tabs button.active { color: var(--ui-accent); border-color: var(--ui-accent); }
+  .sl-ui .ot-primary { background: var(--ui-accent); }
+  /* Public pages share the same rhythm with the internal workspace. */
+  .sl-ui .cp-header { min-height: 78px; }
+  .sl-ui .cp-main { max-width: 1200px; margin-top: 28px; }
+  .sl-ui .cp-welcome { border: 1px solid #d6e8e3; padding: 30px; }
+  .sl-ui .cp-tabs { gap: 8px; padding: 8px; background: var(--ui-surface); border: 1px solid var(--ui-line); border-radius: 14px; }
+  .sl-ui .cp-tabs .cp-button { flex: 1; border-color: transparent; }
+  .sl-ui .cp-file { border-left: 3px solid var(--ui-accent); padding: 18px; }
+  .sl-ui .shell { max-width: 1160px; }
+  .sl-ui .intro { max-width: 760px; margin-bottom: 28px; }
+  .sl-ui .intro p { font-size: 15px; line-height: 1.9; }
+  .sl-ui .pane { padding: 24px; }
+  .sl-ui .pane>h2 { border-bottom: 1px solid var(--ui-line); padding-bottom: 14px; margin-bottom: 18px; }
+  .sl-ui .item.selected { border-left: 4px solid var(--ui-accent); }
+  .sl-ui .tabs .tab { min-height: 44px; flex: 1; }
+  .sl-ui .sl-auth-panel { background: radial-gradient(ellipse at top right,#e8f4f1,transparent 65%),var(--ui-canvas); }
+  .sl-ui .sl-auth-box { background: var(--ui-surface); padding: 32px; border: 1px solid var(--ui-line); border-radius: 22px; box-shadow: 0 16px 50px #18344808; width: min(480px,100%); }
+  .sl-ui .sl-auth-box h2 { font-size: 28px; }
+  .sl-ui .sl-auth-box footer { padding-top: 18px; border-top: 1px solid var(--ui-line); line-height: 1.8; }
+  .sl-ui .sl-password button { min-height: 34px; }
+  .sl-ui[data-role=Admin] .sl-auth-panel { background: var(--ui-canvas); }
+}
+@media screen and (max-width: 1000px) {
+  .sl-ui .sl-themes { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .sl-ui .cal-filters { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media screen and (max-width: 900px) {
+  .sl-ui #view-files .flex:has(>div>#filesFilterCaseSelect) { grid-template-columns: 1fr; }
+  .sl-ui .main-area { width: 100%; margin-left: 0; }
+  .sl-ui .main-area>div:has(>#workspaceView) { padding: 20px; }
+  .sl-ui .topbar { padding: 14px 18px; }
+  .sl-ui #pageHeaderTitle { font-size: 20px; }
+}
+@media screen and (max-width: 600px) {
+  .sl-ui .main-area>div:has(>#workspaceView) { padding: 16px 12px; }
+  .sl-ui #workspaceView { gap: 16px; }
+  .sl-ui #workspaceView .sl-card { padding: 18px; border-radius: 15px; }
+  .sl-ui #workspaceView .sl-card h2 { font-size: 18px; }
+  .sl-ui #pageHeaderTitle { font-size: 18px; }
+  .sl-ui .topbar { padding: 12px 14px; }
+  .sl-ui .sl-workspace-tools { gap: 8px; }
+  .sl-ui :where(.sl-dialog-body,.ot-mini-body) { padding: 20px 16px; }
+  .sl-ui .sl-dialog { width: calc(100vw - 20px); max-height: 92dvh; border-radius: 16px; }
+  .sl-ui .sl-dialog-body .sl-form>.sl-row:last-child { position: sticky; bottom: -20px; padding: 14px 0; background: var(--ui-surface); }
+  .sl-ui .sl-dialog-body .sl-form>.sl-row:last-child>.sl-button { flex: 1; }
+  .sl-ui .sl-table { font-size: 13px; }
+  .sl-ui .sl-table :where(th,td) { padding: 12px; }
+  .sl-ui .sl-themes { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .sl-ui .cal-filters { grid-template-columns: 1fr; }
+  .sl-ui .cp-tabs { flex-wrap: wrap; }
+  .sl-ui .cp-tabs .cp-button { flex: 1 1 40%; font-size: 13px; }
+  .sl-ui .cp-welcome { padding: 22px; }
+  .sl-ui .cp-main { padding: 0 12px 40px; }
+  .sl-ui :where(.cp-card,.pane,.auth) { padding: 18px; }
+  .sl-ui .sl-auth-panel { padding: 22px 14px; }
+  .sl-ui .sl-auth-box { padding: 24px 20px; }
+  .sl-ui .sl-auth-box h2 { font-size: 24px; }
+  .sl-ui .sl-auth-story { gap: 14px; padding: 24px; }
+  .sl-ui .sl-auth-story h1 { font-size: 24px; }
+  .sl-ui :where(.sl-label,.cp-label,.form,.case-form) :where(input,select,textarea) { font-size: 16px; }
+}
+@media screen and (prefers-reduced-motion: reduce) {
+  .sl-ui :where(.sl-button,.cp-button,.primary,.secondary,.quiet) { transition: none; }
+}

@@ -110,6 +110,7 @@ public class CaseDocument
 {
     public int Id { get; set; }
     public int CaseId { get; set; }
+    public int? PartyId { get; set; }
     public int TemplateId { get; set; }
     public string FormCode { get; set; } = "(๗)";
     public string DocumentTitle { get; set; } = string.Empty; // เช่น คำร้อง ขอยื่นคำให้การ(เพิ่มเติม)

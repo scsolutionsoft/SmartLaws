@@ -5,7 +5,7 @@ using Microsoft.Data.SqlClient;
 
 namespace SmartLaws.Web.Services;
 
-public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration configuration)
+public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration configuration, DatabaseService db)
 {
     public const long MaxFileBytes = 1024L * 1024 * 1024;
     public const long MaxRequestBytes = MaxFileBytes + 1024 * 1024;
@@ -19,6 +19,8 @@ public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration 
     {
         var path = request.Path.Value ?? "";
         return path.Equals("/api/files", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/files/", StringComparison.OrdinalIgnoreCase)
+                && path.EndsWith("/replace-content", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/client-records", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/personal-documents", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/payments/slips", StringComparison.OrdinalIgnoreCase)
@@ -45,7 +47,6 @@ public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration 
         if (expectedLength <= 0 || expectedLength > MaxFileBytes)
             throw new InvalidDataException("ไฟล์ต้องมีขนาดมากกว่า 0 และไม่เกิน 1 GB");
 
-        Directory.CreateDirectory(Root);
         var key = Guid.NewGuid().ToString("N") + ".bin";
         await SaveWithKeyAsync(source,key,expectedLength,cancellationToken);
         return key;
@@ -55,28 +56,31 @@ public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration 
     {
         if (expectedLength <= 0 || expectedLength > MaxFileBytes)
             throw new InvalidDataException("ไฟล์ต้องมีขนาดมากกว่า 0 และไม่เกิน 1 GB");
-        Directory.CreateDirectory(Root);
-        var path=GetPath(key);
-        var completed = false;
-        try
+        if (!IsValidKey(key)) throw new InvalidDataException("รหัสไฟล์ไม่ถูกต้อง");
+        await using var connection = db.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
+        await connection.ExecuteAsync(new CommandDefinition(
+            "INSERT INTO SL_FileBlobs(StorageKey,Content,SizeBytes) VALUES(@key,0x,@expectedLength)",
+            new { key, expectedLength }, transaction, cancellationToken:cancellationToken));
         {
-            await using var target = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var buffer = new byte[BufferSize];
+            var buffer = new byte[1024 * 1024];
             long total = 0;
             int read;
             while ((read = await source.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
             {
                 total += read;
                 if (total > MaxFileBytes) throw new InvalidDataException("ไฟล์ต้องมีขนาดไม่เกิน 1 GB");
-                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandTimeout = 120;
+                command.CommandText = "UPDATE SL_FileBlobs SET Content.WRITE(@bytes,NULL,0) WHERE StorageKey=@key";
+                command.Parameters.Add("@key",System.Data.SqlDbType.NVarChar,40).Value=key;
+                command.Parameters.Add("@bytes",System.Data.SqlDbType.VarBinary,-1).Value=buffer.AsSpan(0,read).ToArray();
+                await command.ExecuteNonQueryAsync(cancellationToken);
             }
             if (total != expectedLength) throw new InvalidDataException("ขนาดไฟล์ที่รับมาไม่ตรงกัน กรุณาลองใหม่");
-            completed = true;
-        }
-        finally
-        {
-            if (!completed && File.Exists(path)) File.Delete(path);
+            transaction.Commit();
         }
     }
 
@@ -100,19 +104,54 @@ public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration 
         await using var input = OpenRead(key);
         var header = new byte[expected.Length];
         var count = await input.ReadAsync(header.AsMemory(), cancellationToken);
-        return count == expected.Length && header.AsSpan().SequenceEqual(expected);
+        if (count != expected.Length || !header.AsSpan().SequenceEqual(expected)) return false;
+        if (mimeType == "application/pdf")
+        {
+            input.Position=0;
+            int pages;
+            try { using var pdf=UglyToad.PdfPig.PdfDocument.Open(input); pages=pdf.NumberOfPages; }
+            catch (Exception error) when (error is not OutOfMemoryException and not OperationCanceledException) { return false; }
+            if (pages<1) return false;
+            using var connection=db.CreateConnection();
+            await connection.ExecuteAsync(new CommandDefinition("UPDATE SL_FileBlobs SET PageCount=@pages WHERE StorageKey=@key",new{pages,key},cancellationToken:cancellationToken));
+        }
+        return true;
     }
 
-    public FileStream OpenRead(string key) => new(GetPath(key), FileMode.Open, FileAccess.Read, FileShare.Read,
-        BufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
+    // SQL is authoritative. The delete-on-close spool provides seek/range support
+    // without retaining another permanent copy or allocating a 1 GB byte array.
+    public FileStream OpenRead(string key)
+    {
+        if (!IsValidKey(key)) throw new InvalidDataException("รหัสไฟล์ไม่ถูกต้อง");
+        using var connection=db.CreateConnection(); connection.Open();
+        using var command=connection.CreateCommand();
+        command.CommandTimeout=120;
+        command.CommandText="SELECT Content FROM SL_FileBlobs WHERE StorageKey=@key";
+        command.Parameters.AddWithValue("@key",key);
+        using var reader=command.ExecuteReader(System.Data.CommandBehavior.SequentialAccess);
+        if (!reader.Read()) throw new FileNotFoundException("ไม่พบไฟล์ในฐานข้อมูล SQL");
+        var output=new FileStream(Path.Combine(Path.GetTempPath(),$"smartlaws-sql-{Guid.NewGuid():N}.tmp"),
+            FileMode.CreateNew,FileAccess.ReadWrite,FileShare.Read,BufferSize,FileOptions.Asynchronous|FileOptions.DeleteOnClose);
+        try { using var input=reader.GetStream(0); input.CopyTo(output,BufferSize); output.Position=0; return output; }
+        catch { output.Dispose(); throw; }
+    }
+
+    public async Task<int> PageCountAsync(string key)
+    {
+        using var connection=db.CreateConnection();
+        return await connection.ExecuteScalarAsync<int>("SELECT COALESCE(PageCount,1) FROM SL_FileBlobs WHERE StorageKey=@key",new{key});
+    }
 
     public static bool IsValidKey(string key) =>
-        Guid.TryParseExact(Path.GetFileNameWithoutExtension(key),"N",out _) &&
+        key.Length==36 && Guid.TryParseExact(key[..32],"N",out _) &&
         Path.GetExtension(key).Equals(".bin",StringComparison.OrdinalIgnoreCase);
 
     public void Delete(string? key)
     {
-        if (!string.IsNullOrWhiteSpace(key) && File.Exists(GetPath(key))) File.Delete(GetPath(key));
+        if (string.IsNullOrWhiteSpace(key)) return;
+        if (!IsValidKey(key)) throw new InvalidDataException("รหัสไฟล์ไม่ถูกต้อง");
+        using var connection=db.CreateConnection();
+        connection.Execute("DELETE FROM SL_FileBlobs WHERE StorageKey=@key",new{key});
     }
 
     string GetPath(string key)
@@ -126,6 +165,13 @@ public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration 
     {
         using var connection = db.CreateConnection();
         await connection.ExecuteAsync("""
+            IF OBJECT_ID('SL_FileBlobs') IS NULL
+                CREATE TABLE SL_FileBlobs(
+                    StorageKey nvarchar(40) NOT NULL PRIMARY KEY,
+                    Content varbinary(max) NOT NULL,
+                    SizeBytes bigint NOT NULL,
+                    PageCount int NULL,
+                    CreatedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME());
             IF COL_LENGTH('SL_CaseFileAttachments','StorageKey') IS NULL
                 ALTER TABLE SL_CaseFileAttachments ADD StorageKey nvarchar(40) NULL;
             IF COL_LENGTH('SL_PersonalDocuments','StorageKey') IS NULL
@@ -137,5 +183,80 @@ public sealed class FileStorage(IWebHostEnvironment environment, IConfiguration 
             IF COL_LENGTH('SL_PaymentSlips','SlipMimeType') IS NULL
                 ALTER TABLE SL_PaymentSlips ADD SlipMimeType nvarchar(100) NULL;
             """);
+    }
+
+    public async Task ImportLegacyFilesAsync(ILogger logger)
+    {
+        using var connection=db.CreateConnection();
+        var keys=await connection.QueryAsync<string>("""
+            SELECT StorageKey FROM SL_CaseFileAttachments WHERE StorageKey IS NOT NULL AND StorageKey<>''
+            UNION SELECT StorageKey FROM SL_PersonalDocuments WHERE StorageKey IS NOT NULL AND StorageKey<>''
+            UNION SELECT SlipStorageKey FROM SL_PaymentSlips WHERE SlipStorageKey IS NOT NULL AND SlipStorageKey<>''
+            """);
+        int imported=0, missing=0;
+        foreach(var key in keys)
+        {
+            if(await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM SL_FileBlobs WHERE StorageKey=@key",new{key})>0)continue;
+            if(!IsValidKey(key)||!File.Exists(GetPath(key))){missing++;continue;}
+            await using var input=File.OpenRead(GetPath(key));
+            await SaveWithKeyAsync(input,key,input.Length,CancellationToken.None);
+            imported++;
+        }
+        // Older releases could retain a physical path in FileUrlOrPath without a
+        // StorageKey. Recover those rows in place when the original is still on
+        // disk. API/HTTPS links are references, not local files, and are skipped.
+        var pathRows=await connection.QueryAsync<(int Id,string? StorageKey,string FileUrlOrPath,string MimeType)>("""
+            SELECT Id,StorageKey,FileUrlOrPath,MimeType FROM SL_CaseFileAttachments f
+            WHERE ISNULL(FileUrlOrPath,'')<>''
+              AND FileUrlOrPath NOT LIKE '/api/%'
+              AND FileUrlOrPath NOT LIKE 'http://%'
+              AND FileUrlOrPath NOT LIKE 'https://%'
+              AND (StorageKey IS NULL OR NOT EXISTS(SELECT 1 FROM SL_FileBlobs b WHERE b.StorageKey=f.StorageKey))
+            """);
+        int pathImported=0;
+        foreach(var row in pathRows)
+        {
+            string sourcePath;
+            try
+            {
+                sourcePath=Path.IsPathFullyQualified(row.FileUrlOrPath)
+                    ? Path.GetFullPath(row.FileUrlOrPath)
+                    : Path.GetFullPath(row.FileUrlOrPath,Root);
+            }
+            catch(Exception error) when(error is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                logger.LogWarning("Cannot resolve legacy attachment path for file {FileId}",row.Id);
+                continue;
+            }
+            if(!File.Exists(sourcePath)){missing++;continue;}
+            var info=new FileInfo(sourcePath);
+            if(info.Length<=0||info.Length>MaxFileBytes){missing++;continue;}
+            var mime=row.MimeType is "application/pdf" or "image/png" or "image/jpeg" ? row.MimeType : "";
+            if(mime.Length==0){missing++;continue;}
+            var key=!string.IsNullOrWhiteSpace(row.StorageKey)&&IsValidKey(row.StorageKey)
+                ? row.StorageKey : Guid.NewGuid().ToString("N")+".bin";
+            try
+            {
+                await using var input=File.OpenRead(sourcePath);
+                await SaveWithKeyAsync(input,key,input.Length,CancellationToken.None);
+                var validationName=mime switch {"application/pdf"=>"legacy.pdf","image/png"=>"legacy.png",_=>"legacy.jpg"};
+                if(!await IsValidDocumentAsync(key,mime,validationName,CancellationToken.None))
+                {
+                    Delete(key);missing++;continue;
+                }
+                var pages=mime=="application/pdf"?await PageCountAsync(key):1;
+                await connection.ExecuteAsync("""
+                    UPDATE SL_CaseFileAttachments SET StorageKey=@key,FileUrlOrPath='',FileDataBase64='',
+                        StorageType=@storageType,MimeType=@mime,PageCount=@pages WHERE Id=@Id
+                    """,new{row.Id,key,mime,pages,storageType=mime=="application/pdf"?"PDF":"IMAGE"});
+                pathImported++;
+            }
+            catch(Exception error) when(error is IOException or UnauthorizedAccessException or InvalidDataException or SqlException)
+            {
+                try{Delete(key);}catch(Exception cleanupError){logger.LogWarning(cleanupError,"Cannot clean failed legacy import {FileId}",row.Id);}
+                logger.LogWarning(error,"Cannot import legacy attachment {FileId} from {SourcePath}",row.Id,sourcePath);
+            }
+        }
+        logger.LogInformation("SQL upload migration: {Imported} storage keys and {PathImported} physical paths imported; {Missing} originals unavailable. Source files preserved.",imported,pathImported,missing);
     }
 }

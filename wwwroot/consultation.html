@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>รับปรึกษาคดี | SmartLaws</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/consultation.css?v=2"><link rel="stylesheet" href="/css/theme-palette.css?v=1">
+<link rel="stylesheet" href="/css/app-ui.css?v=2"><link rel="stylesheet" href="/css/menu-typography.css?v=1"></head>
+<body class="sl-ui">
+  <header class="top"><a class="brand" href="/">⚖ SmartLaws</a><div id="topActions"></div></header>
+  <main class="shell">
+    <section class="consultation-hero"><div><span class="eyebrow">SMARTLAWS CONSULTATION</span><h1>เริ่มต้นปรึกษา<br>ให้ทุกเรื่องกฎหมายมีทางไปต่อ</h1><p>ลงทะเบียนด้วยชื่อและเบอร์โทร เลือกทนายที่ต้องการปรึกษา และติดตามคำตอบในพื้นที่ส่วนตัวของคุณ</p><div class="consultation-benefits"><span>01 เลือกทนาย</span><span>02 ส่งเรื่องปรึกษา</span><span>03 พูดคุยและติดตาม</span></div></div><img src="/images/law-office.svg" alt="ภาพประกอบสำนักงานทนายความ หนังสือกฎหมาย และตาชั่งแห่งความยุติธรรม"></section>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="authPanel" class="card auth" hidden>
+      <div class="tabs"><button id="loginTab" class="tab active" type="button">เข้าสู่ระบบ</button><button id="registerTab" class="tab" type="button">ลงทะเบียนขอปรึกษา</button></div>
+      <form id="loginForm" class="form">
+        <label>เบอร์โทรที่ใช้ลงทะเบียน<input name="username" inputmode="tel" autocomplete="username" required></label>
+        <label>รหัสผ่าน<input name="password" type="password" autocomplete="current-password" minlength="10" required></label>
+        <p class="error" id="loginError"></p><button class="primary" type="submit">เข้าสู่ระบบ</button>
+      </form>
+      <form id="registerForm" class="form" hidden>
+        <label>ชื่อและนามสกุล<input name="fullName" autocomplete="name" maxlength="200" required></label>
+        <label>เบอร์โทรที่ติดต่อได้<input name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="30" required></label>
+        <label>เลือกทนายที่ต้องการปรึกษา<select name="lawyerProfileId" id="lawyerSelect" required><option value="">กำลังโหลดรายชื่อทนาย…</option></select></label>
+        <label>หัวข้อหรือรายละเอียดเบื้องต้น <span class="muted">(ไม่บังคับ)</span><textarea name="summary" rows="3" maxlength="2000" placeholder="เล่าเรื่องโดยย่อได้ หรือเว้นว่างไว้ก่อน"></textarea></label>
+        <label>ตั้งรหัสผ่าน<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="200" required><small>อย่างน้อย 10 ตัวอักษร</small></label>
+        <label>ยืนยันรหัสผ่าน<input name="confirmPassword" type="password" autocomplete="new-password" minlength="10" maxlength="200" required></label>
+        <p class="error" id="registerError"></p><button class="primary" type="submit">สร้างบัญชีและส่งคำขอ</button>
+        <p class="privacy">เบอร์โทรใช้สำหรับติดต่อกลับ บัญชีนี้ใช้พูดคุยกับทนายที่เลือกและไม่สามารถดูข้อมูลสำนวนของผู้อื่นได้</p>
+      </form>
+    </section>
+    <section id="portalPanel" class="portal" hidden></section>
+    <section id="staffPanel" class="staff" hidden></section>
+    <section class="consultation-publicity" aria-labelledby="consultationNewsTitle"><header><div><span class="eyebrow">NEWS &amp; ANNOUNCEMENTS</span><h2 id="consultationNewsTitle">ข่าวสารและบริการจาก SmartLaws</h2><p>ประกาศ บริการ และข้อมูลที่น่าสนใจสำหรับผู้ขอคำปรึกษา</p></div><a id="consultationManageNews" class="quiet" href="/?page=news" hidden>จัดการประชาสัมพันธ์ →</a></header><div id="publicNews" aria-live="polite"></div></section>
+  </main>
+  <link rel="stylesheet" href="/css/community.css?v=2">
+  <script src="/js/community.js?v=2"></script>
+  <script src="/js/consultation.js?v=3"></script>
+</body>
+</html>

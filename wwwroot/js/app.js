@@ -621,10 +621,27 @@ window.App = {
             document.querySelectorAll('#lawyerProfileSettings [data-lawyer-profile-field]').forEach(input => {
                 input.value = profile[input.dataset.lawyerProfileField] ?? '';
             });
+            const isClerk = this.state.currentUser?.role === 'Clerk';
+            const heading = document.getElementById('lawyerProfileHeading');
+            if (heading) heading.textContent = isClerk ? 'ข้อมูลโปรไฟล์เสมียนทนายสำหรับแบบพิมพ์ศาล' : 'ข้อมูลโปรไฟล์ทนายสำหรับแบบพิมพ์ศาล';
+            const nameLabel = document.querySelector('[data-lawyer-profile-field="fullName"]')?.closest('div')?.querySelector('label');
+            if (nameLabel) nameLabel.textContent = isClerk ? 'ชื่อ-นามสกุลเสมียนทนาย' : 'ชื่อ-นามสกุลทนายความ';
+            const licenseLabel = document.querySelector('[data-lawyer-profile-field="licenseNo"]')?.closest('div')?.querySelector('label');
+            if (licenseLabel && isClerk) licenseLabel.textContent = 'เลขประจำตัว / ใบอนุญาต';
+            this.renderLawyerProfileSummary(profile);
         } catch (error) {
             console.error('โหลดโปรไฟล์ทนายไม่สำเร็จ', error);
             this.showToast(error.message || 'โหลดโปรไฟล์ทนายไม่สำเร็จ');
         }
+    },
+
+    renderLawyerProfileSummary(profile) {
+        const summary = document.getElementById('lawyerProfileSummary');
+        if (!summary || !profile) return;
+        const esc = value => this.escapeHtml(value || '-');
+        const address = [profile.houseNo && `บ้านเลขที่ ${profile.houseNo}`, profile.moo && profile.moo !== '-' && `หมู่ ${profile.moo}`, profile.soi && profile.soi !== '-' && `ซอย ${profile.soi}`, profile.road && profile.road !== '-' && `ถนน ${profile.road}`, profile.subDistrict && `ต.${profile.subDistrict}`, profile.district && `อ.${profile.district}`, profile.province && `จ.${profile.province}`, profile.postalCode].filter(Boolean).join(' ');
+        const isClerk = this.state.currentUser?.role === 'Clerk';
+        summary.innerHTML = `<div class="mb-3 flex flex-wrap items-center gap-2"><strong class="text-sm text-slate-800">สรุปโปรไฟล์${isClerk ? 'เสมียนทนาย' : 'ทนายความ'}</strong><span class="rounded-full bg-indigo-100 px-2 py-1 font-bold text-indigo-700">${isClerk ? 'เสมียนทนาย' : 'ทนายความ'}</span></div><div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"><div><span class="text-slate-400">ชื่อ-นามสกุล</span><div class="font-semibold text-slate-800">${esc(profile.fullName)}</div></div><div><span class="text-slate-400">เลขประจำตัว / ใบอนุญาต</span><div class="font-semibold text-slate-800">${esc(profile.citizenId || profile.licenseNo)}</div></div><div><span class="text-slate-400">โทรศัพท์</span><div class="font-semibold text-slate-800">${esc(profile.phone)}</div></div><div><span class="text-slate-400">อาชีพ · อายุ</span><div class="font-semibold text-slate-800">${esc(profile.occupation)} · ${esc(profile.age)}</div></div><div class="sm:col-span-2 lg:col-span-4"><span class="text-slate-400">ที่อยู่</span><div class="font-semibold text-slate-800">${esc(address)}</div></div></div>`;
     },
 
     async saveLawyerProfileSettings() {
@@ -645,6 +662,7 @@ window.App = {
 
             const profile = await response.json();
             this.state.lawyerProfile = profile;
+            this.renderLawyerProfileSummary(profile);
             const profileIndex = this.state.lawyers.findIndex(p => Number(p.id) === profileId);
             if (profileIndex >= 0) this.state.lawyers[profileIndex] = profile;
             this.state.users.filter(u => Number(u.lawyerProfileId) === profileId).forEach(user => {
@@ -654,6 +672,9 @@ window.App = {
                 user.phone = profile.phone;
                 user.officeName = profile.officeName;
             });
+            if (Number(this.state.currentUser?.lawyerProfileId) === profileId) {
+                Object.assign(this.state.currentUser, { fullName: profile.fullName, licenseNo: profile.licenseNo, citizenId: profile.citizenId, phone: profile.phone, officeName: profile.officeName });
+            }
             this.showToast('บันทึกโปรไฟล์ทนายและที่อยู่เรียบร้อยแล้ว');
         } catch (error) {
             console.error('บันทึกโปรไฟล์ทนายไม่สำเร็จ', error);
@@ -942,12 +963,20 @@ window.App = {
         const caseDocs = this.getAccessibleDocuments().filter(d => d.caseId === Number(this.state.currentCaseId));
         const docSel = document.getElementById('studioDocSelect');
         if (docSel) {
-            docSel.innerHTML = caseDocs.map(d => `
-                <option value="${d.id}" ${this.state.currentDoc?.id === d.id ? 'selected' : ''}>
-                    ${d.formCode} ${d.documentTitle}
-                </option>
-            `).join('') + `<option value="NEW">+ สร้างเอกสารใหม่ในสำนวนนี้...</option>`;
+            const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+            docSel.innerHTML = caseDocs.map(d => {
+                let extra = {};
+                try { extra = JSON.parse(d.extraFieldsJson || '{}') || {}; } catch { }
+                const isDefenseAnswer = d.formCode === '(๑๑)' || d.formCode === '(๑๑ ก.)';
+                const status = extra.SelectedPartyStatus || (isDefenseAnswer && String(d.requesterStatus || '').includes('จำเลย') ? d.requesterStatus : '');
+                const name = extra.SelectedPartyName || (status ? d.requesterFullName : '');
+                const partyLabel = status || name ? ` · ${[status,name].filter(Boolean).map(esc).join(' ')} ` : '';
+                return `<option value="${d.id}" ${this.state.currentDoc?.id === d.id ? 'selected' : ''}>${esc(d.formCode)} ${esc(d.documentTitle)}${partyLabel}</option>`;
+            }).join('') + `<option value="NEW">+ สร้างเอกสารใหม่ในสำนวนนี้...</option>`;
+            docSel.value = Number(this.state.currentDoc?.id) > 0 ? String(this.state.currentDoc.id) : 'NEW';
         }
+        const deleteDocButton = document.getElementById('btnDeleteStudioDocument');
+        if (deleteDocButton) deleteDocButton.classList.toggle('hidden', !(Number(this.state.currentDoc?.id) > 0));
 
         const tplSel = document.getElementById('studioTemplateSelect');
         if (tplSel) {
@@ -1049,6 +1078,7 @@ window.App = {
         if (doc) {
             this.loadDocumentIntoEditorState(doc);
             this.syncEditorToPreview();
+            this.populateStudioDropdowns();
         }
     },
 
@@ -1069,6 +1099,7 @@ window.App = {
         const caseLawyer = this.state.lawyers.find(l => Number(l.id) === Number(lawCase.primaryLawyerId));
         const clerk = effectiveLawyer?.role === 'Clerk' ? defaultLawyer : null;
         const isAppointmentForm9 = tpl.formCode === '(๙)';
+        const isProxyForm10 = tpl.formCode === '(๑๐)';
         const emptyRequesterFields = isAppointmentForm9 ? {
             docDay: '', docMonth: '', docYear: '',
             requesterFullName: '',
@@ -1086,6 +1117,10 @@ window.App = {
             requesterProvince: '',
             requesterPostalCode: '',
             requesterPhone: ''
+        } : isProxyForm10 ? {
+            requesterFullName: '', requesterStatus: '', requesterCitizenId: '', requesterOccupation: '', requesterAge: '',
+            requesterRace: '', requesterNationality: '', requesterHouseNo: '', requesterMoo: '', requesterRoad: '', requesterSoi: '',
+            requesterNearBy: '', requesterSubDistrict: '', requesterDistrict: '', requesterProvince: '', requesterPostalCode: '', requesterPhone: ''
         } : {};
         const form9Extra = isAppointmentForm9
             ? { Form9Lawyer: this.toForm9LawyerProfile(caseLawyer) || {} }
@@ -1130,13 +1165,13 @@ window.App = {
             clausesJson: JSON.stringify(defaultClauses),
             extraFieldsJson: JSON.stringify(form9Extra),
             closingPrayer: tpl.formCode === '(๔)' ? 'ควรมิควรแล้วแต่จะโปรด' : window.CourtRenderer.normalizeClosingPrayer(tpl.defaultClosingText),
-            signerName: isAppointmentForm9 ? '' : defaultLawyer?.fullName || '',
-            signerRole: isAppointmentForm9 ? '' : lawCase?.representingPartyOrder ? 'ทนาย'+lawCase.representingPartyOrder : lawCase?.lawyerRole || 'ทนายความ',
+            signerName: isAppointmentForm9 || isProxyForm10 ? '' : defaultLawyer?.fullName || '',
+            signerRole: isAppointmentForm9 || isProxyForm10 ? '' : lawCase?.representingPartyOrder ? 'ทนาย'+lawCase.representingPartyOrder : lawCase?.lawyerRole || 'ทนายความ',
             drafterName: isAppointmentForm9 ? caseLawyer?.fullName || defaultLawyer?.fullName || '' : defaultLawyer?.fullName || '',
-            typistName: clerk?.fullName || '',
-            signatureImageBase64: isAppointmentForm9 ? '' : defaultLawyer?.signatureDataUrl || '',
+            typistName: isProxyForm10 ? '' : clerk?.fullName || '',
+            signatureImageBase64: isAppointmentForm9 || isProxyForm10 ? '' : defaultLawyer?.signatureDataUrl || '',
             drafterSignatureBase64: isAppointmentForm9 ? caseLawyer?.signatureDataUrl || '' : defaultLawyer?.signatureDataUrl || '',
-            typistSignatureBase64: clerk?.signatureDataUrl || '',
+            typistSignatureBase64: isProxyForm10 ? '' : clerk?.signatureDataUrl || '',
             useThaiNumerals: true,
             status: 'ร่าง'
         };
@@ -1206,9 +1241,13 @@ window.App = {
         setVal('edRequesterCitizenId', doc.requesterCitizenId || '');
         setVal('edRequesterOccupation', doc.requesterOccupation || '');
         setVal('edRequesterAge', doc.requesterAge || '');
+        setVal('edRequesterRace', doc.requesterRace || 'ไทย');
+        setVal('edRequesterNationality', doc.requesterNationality || 'ไทย');
         setVal('edRequesterHouseNo', doc.requesterHouseNo || '');
         setVal('edRequesterMoo', doc.requesterMoo || '');
         setVal('edRequesterRoad', doc.requesterRoad || '');
+        setVal('edRequesterSoi', doc.requesterSoi || '');
+        setVal('edRequesterNearBy', doc.requesterNearBy || '');
         setVal('edRequesterSubDistrict', doc.requesterSubDistrict || '');
         setVal('edRequesterDistrict', doc.requesterDistrict || '');
         setVal('edRequesterProvince', doc.requesterProvince || '');
@@ -1464,7 +1503,7 @@ window.App = {
             }
             const thaiIdx = window.CourtRenderer.toThaiNum(idx + 1, true);
             return {
-                ClauseTitle: `ข้อ ${thaiIdx}.`,
+                ClauseTitle: this.state.currentDoc?.formCode === '(๑๐)' ? '' : `ข้อ ${thaiIdx}.`,
                 Content: window.CourtRenderer.normalizeThaiSpacing(p)
             };
         });
@@ -1573,15 +1612,15 @@ window.App = {
             requesterFullName: getVal('edRequesterFullName'),
             requesterStatus: getVal('edRequesterStatus'),
             requesterCitizenId: getVal('edRequesterCitizenId'),
-            requesterRace: 'ไทย',
-            requesterNationality: 'ไทย',
+            requesterRace: getVal('edRequesterRace'),
+            requesterNationality: getVal('edRequesterNationality'),
             requesterOccupation: getVal('edRequesterOccupation'),
             requesterAge: getVal('edRequesterAge'),
             requesterHouseNo: getVal('edRequesterHouseNo'),
             requesterMoo: getVal('edRequesterMoo'),
             requesterRoad: getVal('edRequesterRoad'),
-            requesterSoi: '-',
-            requesterNearBy: '-',
+            requesterSoi: getVal('edRequesterSoi'),
+            requesterNearBy: getVal('edRequesterNearBy'),
             requesterSubDistrict: getVal('edRequesterSubDistrict'),
             requesterDistrict: getVal('edRequesterDistrict'),
             requesterProvince: getVal('edRequesterProvince'),
@@ -1612,6 +1651,33 @@ window.App = {
         this.syncEditorToPreview();
     },
 
+    setStudioMobilePanel(panel) {
+        const view = document.getElementById('view-studio');
+        if (!view) return;
+        const mode = panel === 'preview' ? 'preview' : 'edit';
+        view.dataset.mobilePanel = mode;
+        document.querySelectorAll('#studioMobilePanelControls [role="tab"]').forEach(button => {
+            button.setAttribute('aria-selected', String(button.getAttribute('aria-controls') === (mode === 'edit' ? 'studioEditorPanel' : 'studioPreviewPanel')));
+        });
+        if (mode === 'preview') requestAnimationFrame(() => this.updateCourtPreviewScale(document.getElementById('studioPaperPreview')));
+    },
+
+    updateCourtPreviewScale(root) {
+        if (!root) return;
+        const fit = () => {
+            const availableWidth = root.clientWidth;
+            if (!availableWidth) return;
+            const paperWidth = 210 * 96 / 25.4;
+            const scale = Math.min(1, Math.max(0.3, (availableWidth - 16) / paperWidth));
+            root.style.setProperty('--court-preview-scale', scale.toFixed(4));
+        };
+        if (window.ResizeObserver && !root._courtPreviewObserver) {
+            root._courtPreviewObserver = new ResizeObserver(fit);
+            root._courtPreviewObserver.observe(root);
+        }
+        requestAnimationFrame(fit);
+    },
+
     syncEditorToPreview() {
         const doc = this.collectCurrentDocFromInputs();
         this.state.currentDoc = doc;
@@ -1619,6 +1685,7 @@ window.App = {
         const previewEl = document.getElementById('studioPaperPreview');
         if (previewEl) {
             previewEl.innerHTML = window.CourtRenderer.renderDocumentPagesHtml(doc, lawCase);
+            this.updateCourtPreviewScale(previewEl);
         }
     },
 
@@ -2405,6 +2472,9 @@ window.App = {
                                     ✏️ แก้ไขฟอร์ม
                                 </button>` : ''}
                                 ${canDeleteFiles ? `
+                                <button onclick="App.replaceCaseFileContent(${f.id})" class="px-2.5 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 text-xs font-semibold">
+                                    ↻ เปลี่ยนไฟล์
+                                </button>
                                 <button onclick="App.deleteCaseFileAttachment(${f.id})" class="px-2 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 text-xs font-semibold">
                                     ลบ
                                 </button>` : ''}
@@ -2429,6 +2499,37 @@ window.App = {
         }
     },
 
+    replaceCaseFileContent(fileId) {
+        if (this.state.currentUser?.role !== 'Lawyer') {
+            this.showToast('เฉพาะทนายเจ้าของสำนวนเท่านั้นที่เปลี่ยนไฟล์ได้');
+            return;
+        }
+        const current = this.getAccessibleCaseFiles().find(file => file.id === Number(fileId));
+        if (!current) return;
+        const picker = document.createElement('input');
+        picker.type = 'file';
+        picker.accept = '.pdf,.png,.jpg,.jpeg';
+        picker.onchange = async () => {
+            const file = picker.files?.[0];
+            if (!file) return;
+            if (!window.confirm(`นำไฟล์ “${file.name}” มาแทนที่ “${current.fileTitle}” หรือไม่?\nชื่อเอกสาร สถานะ และการเชื่อมโยงกับวันนัดจะยังคงเดิม`)) return;
+            const body = new FormData();
+            body.append('file', file, file.name);
+            try {
+                this.showToast('กำลังตรวจสอบและบันทึกไฟล์ใหม่…');
+                const response = await fetch(`/api/files/${fileId}/replace-content`, { method: 'POST', body });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw Error(result.message || `เปลี่ยนไฟล์ไม่สำเร็จ (HTTP ${response.status})`);
+                await this.loadDashboardData();
+                this.renderFilesDirectoryView();
+                this.showToast(`เปลี่ยนไฟล์แล้ว • ระบบอ่านได้ ${result.pageCount || 1} แผ่น`);
+            } catch (error) {
+                this.showToast(error.message || 'เปลี่ยนไฟล์ไม่สำเร็จ');
+            }
+        };
+        picker.click();
+    },
+
     async deleteCaseFileAttachment(fileId) {
         if (this.state.currentUser?.role !== 'Lawyer') {
             this.showToast('เฉพาะทนายเจ้าของสำนวนเท่านั้นที่ลบไฟล์ได้');
@@ -2436,7 +2537,7 @@ window.App = {
         }
         if (!window.confirm('ลบไฟล์นี้ถาวรและยกเลิกการแนบจากวันนัด แชทลูกความ และรายการขั้นตอนคดีหรือไม่? ข้อความและรายการคดีจะยังอยู่ แต่จะไม่มีไฟล์แนบ')) return;
         try {
-            const res = await fetch(`/api/files/${fileId}?detachLinks=true`, { method: 'DELETE' });
+            const res = await fetch(`/api/files/${fileId}/delete?detachLinks=true`, { method: 'POST' });
             if (!res.ok) {
                 const error = await res.json().catch(() => ({}));
                 this.showToast(error.message || `ลบไฟล์ไม่สำเร็จ (HTTP ${res.status})`);
@@ -2563,6 +2664,7 @@ window.App = {
         }
 
         modal.classList.remove('hidden');
+        if (stType === 'COURT_FORM') this.updateCourtPreviewScale(body);
     },
 
     zoomPopupImage(delta) {

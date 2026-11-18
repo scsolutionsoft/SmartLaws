@@ -195,6 +195,7 @@ public static class LawyerArchive
                 var data=await Snapshot(c,tx,id);if(await DataFingerprint(data,storage)!=receipt.Hash)return Results.Conflict(new{message="ข้อมูลเปลี่ยนหลังสำรอง กรุณาดาวน์โหลด ZIP ใหม่ก่อนลบ"});
                 var storageKeys=StorageKeys(data);
                 var ids=Rows(data,"SL_LawCases").Select(r=>Id(r)).ToArray();var profileId=Id(Obj(data["user"]),"LawyerProfileId");
+                await c.ExecuteAsync("UPDATE SL_Consultations SET AssignedLawyerProfileId=NULL,Status=N'Closed',UpdatedAt=SYSUTCDATETIME() WHERE AssignedLawyerProfileId=@profileId",new{profileId},tx);
                 await c.ExecuteAsync("DELETE FROM SL_Sessions WHERE UserId IN(SELECT UserId FROM SL_ClientCaseLinks WHERE CaseId IN @ids) AND NOT EXISTS(SELECT 1 FROM SL_ClientCaseLinks a WHERE a.UserId=SL_Sessions.UserId AND a.CaseId NOT IN @ids AND a.IsActive=1)",new{ids},tx);
                 foreach(var table in Tables.Reverse()){
                     var rows=Rows(data,table).ToArray();if(rows.Length==0)continue;

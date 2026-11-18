@@ -45,9 +45,12 @@ try {
     if (!$ready) { throw 'Published executable did not become ready' }
     $asset = Invoke-WebRequest 'http://127.0.0.1:5099/js/judgment-library.js' -UseBasicParsing
     if (!$asset.Content.Contains('Judgment') -and !$asset.Content.Contains('judgment')) { throw 'Judgment library missing' }
-    foreach ($assetName in @('appointments.js','studio-save.js','appointment-thai-dates.js','appointment-files.js','witness-pagination.js','court-form-editor.js','profile-autofill.js','pdf-viewer.js','multi-file-upload.js','case-management.js','case-parties.js','client-portal.js','client-desk.js','document-vault.js','lawyer-archive.js','special-procedures.js','community.js','office-team.js')) {
+    foreach ($assetName in @('court-tracking.js','appointments.js','studio-save.js','appointment-thai-dates.js','appointment-files.js','witness-pagination.js','court-form-editor.js','profile-autofill.js','pdf-viewer.js','multi-file-upload.js','case-management.js','case-parties.js','client-portal.js','client-desk.js','document-vault.js','lawyer-archive.js','special-procedures.js','community.js','office-team.js')) {
         $assetResponse = Invoke-WebRequest ('http://127.0.0.1:5099/js/' + $assetName) -UseBasicParsing
         if ($assetResponse.StatusCode -ne 200 -or $assetResponse.RawContentLength -lt 1000) { throw ('Asset missing: ' + $assetName) }
+    }
+    foreach ($assetPath in @('css/court-tracking.css','css/theme-palette.css','css/app-ui.css')) {
+        if ((Invoke-WebRequest ('http://127.0.0.1:5099/' + $assetPath) -UseBasicParsing).StatusCode -ne 200) { throw ('Asset missing: ' + $assetPath) }
     }
     Write-Output 'PASS: x64 executable, framework-dependent runtime, IIS config, Production startup, login, judgment/calendar/PDF/upload assets'
 } finally {
@@ -61,6 +64,9 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($publish,$zip,[IO.Compression.CompressionLevel]::Optimal,$false)
 $archive = [IO.Compression.ZipFile]::OpenRead($zip)
 try {
+    foreach ($required in @('COURT-TRACKING.md','wwwroot/js/court-tracking.js','wwwroot/css/court-tracking.css','wwwroot/css/theme-palette.css','wwwroot/css/app-ui.css')) {
+        if (!($archive.Entries | Where-Object { $_.FullName.Replace('\','/') -eq $required })) { throw "ZIP missing $required" }
+    }
     foreach ($required in @('web.config','SmartLaws.Web.exe','IIS-INSTALL.txt','APPOINTMENTS.md','OFFICE-TEAM.md','wwwroot/js/office-team.js','wwwroot/js/judgment-library.js','wwwroot/js/appointments.js','wwwroot/css/appointments.css','wwwroot/js/pdf-viewer.js','wwwroot/js/multi-file-upload.js','wwwroot/js/appointment-files.js','wwwroot/js/witness-pagination.js','wwwroot/css/witness-pagination.css','wwwroot/js/profile-autofill.js','wwwroot/js/appointment-thai-dates.js','wwwroot/js/studio-save.js','wwwroot/css/studio-save.css')) {
         if (!($archive.Entries | Where-Object { $_.FullName.Replace('\','/') -eq $required })) { throw "ZIP missing $required" }
     }

@@ -6,7 +6,12 @@ namespace SmartLaws.Web.Services;
 
 public static class CaseParties
 {
-    public record PartyInput(int Id,string PartySide,int PartyOrder,string FullName,string CitizenId,string Phone,bool IsOurClient);
+    public record PartyInput(
+        int Id,string PartySide,int PartyOrder,string FullName,string CitizenId,string Phone,bool IsOurClient,
+        string Title = "",string Race = "ไทย",string Nationality = "ไทย",string Occupation = "",string Age = "-",
+        string BirthDateText = "-",string HouseNo = "",string Moo = "-",string Road = "-",string Soi = "-",
+        string NearBy = "-",string SubDistrict = "",string District = "",string Province = "ศรีสะเกษ",
+        string PostalCode = "33000",string Fax = "-",string Email = "-");
     public record RosterInput(int Version,string LawyerRole,Dictionary<string,int> Counts,List<PartyInput> Parties);
     public static readonly string[] Sides=["โจทก์","จำเลย","ผู้ร้อง","ผู้คัดค้าน"];
     public static async Task InitializeAsync(DatabaseService db){using var c=db.CreateConnection();await c.ExecuteAsync("""
@@ -26,7 +31,13 @@ public static class CaseParties
         if(list.Any(p=>!string.IsNullOrEmpty(p.CitizenId)&&!System.Text.RegularExpressions.Regex.IsMatch(p.CitizenId,"^[0-9]{13}$")))return "เลขประจำตัวประชาชนต้องมี 13 หลัก หรือเว้นว่างไว้ก่อน";
         if(list.Any(p=>p.IsOurClient&&p.PartySide!=side))return "เลือกลูกความเฉพาะฝ่ายที่ทนายรับว่าความในสำนวนนี้";
         if(requireClient&&!list.Any(p=>p.IsOurClient))return "เลือกลูกความที่รับว่าความอย่างน้อย 1 คน";
-        if(list.Any(p=>(p.Phone?.Length??0)>100))return "หมายเลขโทรศัพท์ยาวเกินกำหนด";
+        if(list.Any(p=>(p.Title?.Length??0)>50||(p.Race?.Length??0)>50||(p.Nationality?.Length??0)>50||
+            (p.Occupation?.Length??0)>100||(p.Age?.Length??0)>20||(p.BirthDateText?.Length??0)>100||
+            (p.HouseNo?.Length??0)>100||(p.Moo?.Length??0)>50||(p.Road?.Length??0)>150||
+            (p.Soi?.Length??0)>150||(p.NearBy?.Length??0)>150||(p.SubDistrict?.Length??0)>150||
+            (p.District?.Length??0)>150||(p.Province?.Length??0)>150||(p.PostalCode?.Length??0)>20||
+            (p.Phone?.Length??0)>100||(p.Fax?.Length??0)>100||(p.Email?.Length??0)>150))
+            return "ข้อมูลประวัติหรือที่อยู่ยาวเกินกำหนด กรุณาตรวจสอบช่องที่กรอก";
         return null;
     }
     public static string Summary(IEnumerable<CaseParty> rows)=>string.Join(" และ",rows.Where(p=>p.IsOurClient).OrderBy(p=>p.PartySide).ThenBy(p=>p.PartyOrder).Select(p=>p.PartySide+"ที่ "+string.Concat(p.PartyOrder.ToString().Select(ch=>"๐๑๒๓๔๕๖๗๘๙"[ch-'0']))));
@@ -46,7 +57,14 @@ public static class CaseParties
         api.MapPut("/cases/{id:int}/parties",async(int id,RosterInput input,HttpContext h,DatabaseService db)=>{
             if(!ClientPortal.Owns(h,id))return Results.NotFound();
             if(input.Parties==null||input.Counts==null)return Results.BadRequest();
-            var rows=input.Parties.Select(p=>new CaseParty{Id=p.Id,CaseId=id,PartySide=p.PartySide,PartyOrder=p.PartyOrder,FullName=p.FullName?.Trim()??"",CitizenId=ClientPortal.Digits(p.CitizenId??""),Phone=p.Phone??"",IsOurClient=p.IsOurClient}).ToList();
+            var rows=input.Parties.Select(p=>new CaseParty{
+                Id=p.Id,CaseId=id,PartySide=p.PartySide,PartyOrder=p.PartyOrder,Title=p.Title??"",FullName=p.FullName?.Trim()??"",
+                CitizenId=ClientPortal.Digits(p.CitizenId??""),Race=p.Race??"ไทย",Nationality=p.Nationality??"ไทย",
+                Occupation=p.Occupation??"",Age=p.Age??"-",BirthDateText=p.BirthDateText??"-",HouseNo=p.HouseNo??"",
+                Moo=p.Moo??"-",Road=p.Road??"-",Soi=p.Soi??"-",NearBy=p.NearBy??"-",SubDistrict=p.SubDistrict??"",
+                District=p.District??"",Province=p.Province??"",PostalCode=p.PostalCode??"",Phone=p.Phone??"",Fax=p.Fax??"",
+                Email=p.Email??"",IsOurClient=p.IsOurClient
+            }).ToList();
             var error=Validate(input.LawyerRole,input.Counts,rows,false);if(error!=null)return Results.BadRequest(new{message=error});
             using var c=db.CreateConnection();await c.OpenAsync();using var tx=c.BeginTransaction(System.Data.IsolationLevel.Serializable);
             var version=await c.ExecuteScalarAsync<int>("SELECT PartyVersion FROM SL_LawCases WITH(UPDLOCK,HOLDLOCK) WHERE Id=@id",new{id},tx);
@@ -57,7 +75,13 @@ public static class CaseParties
                 if(p.Id==0){p.Id=await Insert(c,tx,p);continue;}
                 var linked=await c.ExecuteScalarAsync<string>("SELECT i.CitizenNumber FROM SL_ClientCaseLinks a JOIN SL_ClientIdentities i ON i.UserId=a.UserId WHERE a.CaseId=@id AND a.PartyId=@partyId",new{id,partyId=p.Id},tx);
                 if(!string.IsNullOrEmpty(linked)&&linked!=p.CitizenId)return Results.Conflict(new{message="เลขประชาชนผูกบัญชีลูกความแล้ว ต้องใช้เลขเดิมเพื่อไม่ย้ายสิทธิ์ผิดคน"});
-                await c.ExecuteAsync("UPDATE SL_CaseParties SET PartySide=@PartySide,PartyOrder=@PartyOrder,FullName=@FullName,CitizenId=@CitizenId,Phone=@Phone,IsOurClient=@IsOurClient WHERE Id=@Id AND CaseId=@CaseId",p,tx);
+                await c.ExecuteAsync("""
+                    UPDATE SL_CaseParties SET PartySide=@PartySide,PartyOrder=@PartyOrder,Title=@Title,FullName=@FullName,
+                    CitizenId=@CitizenId,Race=@Race,Nationality=@Nationality,Occupation=@Occupation,Age=@Age,BirthDateText=@BirthDateText,
+                    HouseNo=@HouseNo,Moo=@Moo,Road=@Road,Soi=@Soi,NearBy=@NearBy,SubDistrict=@SubDistrict,District=@District,
+                    Province=@Province,PostalCode=@PostalCode,Phone=@Phone,Fax=@Fax,Email=@Email,IsOurClient=@IsOurClient
+                    WHERE Id=@Id AND CaseId=@CaseId
+                    """,p,tx);
                 if(!p.IsOurClient)await c.ExecuteAsync("UPDATE SL_ClientCaseLinks SET IsActive=0 WHERE CaseId=@CaseId AND PartyId=@Id",p,tx);
             }
             await c.ExecuteAsync("UPDATE SL_LawCases SET LawyerRole=@LawyerRole,PartyCountsJson=@json WHERE Id=@id",new{id,input.LawyerRole,json=JsonSerializer.Serialize(input.Counts)},tx);
